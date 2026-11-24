@@ -1,4 +1,9 @@
-app = 'berry-master-farm-coop'
+# fly.toml app configuration file generated for berrymaster on 2026-11-24T11:45:22Z
+#
+# See https://docs.fly.io/reference/configuration for information about how to use this file.
+#
+
+app = 'berrymaster'
 primary_region = 'sin'
 
 [build]
@@ -16,12 +21,12 @@ primary_region = 'sin'
   min_machines_running = 1
   processes = ['app']
 
-[[http_service.checks]]
-  interval = '30s'
-  timeout = '5s'
-  grace_period = '10s'
-  method = 'GET'
-  path = '/api/health'
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '10s'
+    method = 'GET'
+    path = '/api/health'
 
 [[vm]]
   memory = '512mb'
