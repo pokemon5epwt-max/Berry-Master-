@@ -64,6 +64,7 @@ export default function App() {
   const [obrRole, setObrRole] = useState<'GM' | 'PLAYER'>('PLAYER');
   const [obrInvite, setObrInvite] = useState<OwlbearRoomInvite | null>(null);
   const [obrBroadcastSent, setObrBroadcastSent] = useState<boolean>(false);
+  const [wsOffline, setWsOffline] = useState<boolean>(false);
   const [hudSnapshot, setHudSnapshot] = useState<WorldSnapshot>(() =>
     viewRef.current!.snapshot
   );
@@ -117,16 +118,33 @@ export default function App() {
   useEffect(() => {
     let closedByUnmount = false;
     let reconnectTimer: number | null = null;
+    let failedAttempts = 0;
 
     const connect = () => {
       if (closedByUnmount) return;
+      const configuredWs = (
+        import.meta.env.VITE_WS_URL as string | undefined
+      )?.trim();
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const url = `${proto}//${window.location.host}/ws`;
-      const ws = new WebSocket(url);
+      const url = configuredWs
+        ? configuredWs
+        : `${proto}//${window.location.host}/ws`;
+      const isVercelWithoutWs =
+        !configuredWs && window.location.hostname.endsWith('.vercel.app');
+
+      let ws: WebSocket;
+      try {
+        ws = new WebSocket(url);
+      } catch {
+        setWsOffline(true);
+        return;
+      }
       wsRef.current = ws;
 
       ws.onopen = () => {
         wsConnectedRef.current = true;
+        failedAttempts = 0;
+        setWsOffline(false);
         setErrorMsg(null);
       };
 
@@ -228,14 +246,22 @@ export default function App() {
       };
 
       ws.onclose = () => {
+        const wasConnected = wsConnectedRef.current;
         wsConnectedRef.current = false;
         if (closedByUnmount) return;
+        failedAttempts = wasConnected ? 1 : failedAttempts + 1;
+        if ((!wasConnected && failedAttempts >= 2) || (!wasConnected && isVercelWithoutWs)) {
+          setWsOffline(true);
+        }
         if (screenModeRef.current !== 'SOLO_GAME') {
           soundManager.stopBgm();
           setRoom(null);
           setScreenMode('CONNECTING');
         }
-        reconnectTimer = window.setTimeout(connect, 1500);
+        reconnectTimer = window.setTimeout(
+          connect,
+          failedAttempts >= 2 ? 6000 : 1500
+        );
       };
     };
 
@@ -661,6 +687,7 @@ export default function App() {
             isOwlbearAvailable() ? handleBroadcastOwlbearInvite : undefined
           }
           obrBroadcastSent={obrBroadcastSent}
+          wsOffline={wsOffline}
         />
       )}
 

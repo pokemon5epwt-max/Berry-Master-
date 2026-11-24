@@ -55,6 +55,7 @@ interface LobbyOverlayProps {
   obrInvite?: OwlbearRoomInvite | null;
   onBroadcastOwlbearInvite?: () => void;
   obrBroadcastSent?: boolean;
+  wsOffline?: boolean;
 }
 
 const RpgCornerStuds: React.FC<{ size?: 'lg' | 'md' | 'sm' }> = ({
@@ -110,6 +111,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
   obrInvite = null,
   onBroadcastOwlbearInvite,
   obrBroadcastSent = false,
+  wsOffline = false,
 }) => {
   const [joinCode, setJoinCode] = useState('');
   const [copied, setCopied] = useState(false);
@@ -284,7 +286,9 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                       </p>
                       {isConnecting && (
                         <p className="mt-2 text-[11px] font-bold text-[#7F2921]">
-                          Menghubungkan ke server online...
+                          {wsOffline
+                            ? 'Server Co-op offline — Vercel hanya mendukung Mode Solo. Untuk Co-op online, host server di Render/Railway/Fly.io.'
+                            : 'Menghubungkan ke server online...'}
                         </p>
                       )}
                     </div>
@@ -323,6 +327,11 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                       <p className="mt-1 text-xs font-semibold leading-relaxed text-[#204D36]">
                         Masukkan kode room 6 huruf/angka yang dibuat oleh Host room.
                       </p>
+                      {isConnecting && wsOffline && (
+                        <p className="mt-1.5 text-[11px] font-bold text-[#1B4332]">
+                          Mode Co-op butuh server WebSocket aktif.
+                        </p>
+                      )}
                     </div>
 
                     <div className="mt-2.5 flex items-center overflow-hidden rounded-[10px] border-[2.5px] border-[#4A2816] bg-[#FFF5D8] shadow-[inset_0_0_0_1.5px_#E6C25A] focus-within:ring-2 focus-within:ring-[#247BA0]">
