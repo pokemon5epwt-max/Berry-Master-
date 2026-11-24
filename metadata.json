@@ -1,0 +1,6 @@
+{
+  "name": "Pokopia Berry Farm Co-op",
+  "description": "Game web 2D top-down co-op 2 pemain dalam 1 keyboard bergaya cozy pastel. Kelola kebun Berry, berbagi 4 alat di gudang, siram dan panen Oran, Pecha, serta Sitrus Berry, dan usir Pokémon liar sebelum waktu habis!",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

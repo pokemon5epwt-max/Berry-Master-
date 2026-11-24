@@ -1,0 +1,15 @@
+{
+  "name": "Berry Master Farm Co-op",
+  "version": "1.0.0",
+  "manifest_version": 1,
+  "author": "Berry Master Farm",
+  "description": "Mini-game kebun Berry co-op 4–6 pemain atau solo bergaya cozy Pokopia langsung di meja Owlbear Rodeo.",
+  "icon": "/owlbear-icon.svg",
+  "action": {
+    "title": "Berry Master Farm Co-op",
+    "icon": "/owlbear-icon.svg",
+    "popover": "/?obr=popover",
+    "width": 360,
+    "height": 420
+  }
+}
