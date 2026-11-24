@@ -449,6 +449,21 @@ async function bootstrap() {
   httpServer.listen(port, '0.0.0.0', () => {
     console.log(`Pokopia Berry Farm Co-op server listening on port ${port}`);
   });
+
+  const shutdown = () => {
+    clearInterval(heartbeat);
+    for (const room of rooms.values()) {
+      stopRoomLoop(room);
+    }
+    wss.close();
+    httpServer.close(() => {
+      process.exit(0);
+    });
+    setTimeout(() => process.exit(0), 2000).unref();
+  };
+
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
 }
 
 bootstrap();
