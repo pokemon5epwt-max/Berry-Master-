@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { EndModal } from './components/EndModal.tsx';
 import { GameHud } from './components/GameHud.tsx';
 import { LobbyOverlay } from './components/LobbyOverlay.tsx';
+import { MobileController } from './components/MobileController.tsx';
 import { OwlbearPopover } from './components/OwlbearPopover.tsx';
+import { PrepModal } from './components/PrepModal.tsx';
 import { soundManager } from './game/audio.ts';
 import { ClientWorldView } from './game/clientView.ts';
 import {
@@ -28,6 +30,7 @@ import type {
   LobbyMember,
   RoomInfo,
   ScreenMode,
+  SpectatorOffer,
   StageLevel,
   WorldSnapshot,
 } from './game/types.ts';
@@ -37,6 +40,16 @@ const SOLO_PLAYER_ID = 'solo_1';
 function sanitizeSoloName(raw: string): string {
   const cleaned = raw.trim().replace(/\s+/g, ' ').slice(0, 14);
   return cleaned.length > 0 ? cleaned : 'Petani';
+}
+
+function detectTouchDevice(): boolean {
+  if (typeof window === 'undefined') return false;
+  return (
+    window.matchMedia?.('(pointer: coarse)').matches ||
+    'ontouchstart' in window ||
+    navigator.maxTouchPoints > 0 ||
+    window.innerWidth < 900
+  );
 }
 
 export default function App() {
@@ -51,7 +64,9 @@ export default function App() {
   const socketPlayerIdRef = useRef<string | null>(null);
   const soloEngineRef = useRef<ServerFarmEngine | null>(null);
   const heldKeysRef = useRef<Set<string>>(new Set());
+  const touchMoveRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const lastSentMoveRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const lastTouchNetSendRef = useRef<number>(0);
   const localPlayerIdRef = useRef<string | null>(null);
 
   const owlbearParams = useMemo(() => getInitialOwlbearParams(), []);
@@ -62,6 +77,10 @@ export default function App() {
   const [room, setRoom] = useState<RoomInfo | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [muted, setMuted] = useState<boolean>(false);
+  const [showMobileControls, setShowMobileControls] = useState<boolean>(() =>
+    detectTouchDevice()
+  );
+  const userToggledMobileRef = useRef<boolean>(false);
   const [popoverExpanded, setPopoverExpanded] = useState<boolean>(false);
   const [obrRole, setObrRole] = useState<'GM' | 'PLAYER'>('PLAYER');
   const [obrInvite, setObrInvite] = useState<OwlbearRoomInvite | null>(null);
@@ -69,12 +88,16 @@ export default function App() {
   const [wsOffline, setWsOffline] = useState<boolean>(false);
   const [coopTransport, setCoopTransport] = useState<'ws' | 'owlbear' | 'none'>('none');
   const [selectedStage, setSelectedStage] = useState<StageLevel>(1);
+  const [isSpectator, setIsSpectator] = useState<boolean>(false);
+  const [spectateOffer, setSpectateOffer] = useState<SpectatorOffer | null>(null);
   const [hudSnapshot, setHudSnapshot] = useState<WorldSnapshot>(() =>
     viewRef.current!.snapshot
   );
 
   const selectedStageRef = useRef<StageLevel>(1);
   selectedStageRef.current = selectedStage;
+  const isSpectatorRef = useRef<boolean>(false);
+  isSpectatorRef.current = isSpectator;
   const screenModeRef = useRef<ScreenMode>('CONNECTING');
   screenModeRef.current = screenMode;
   const playerNameRef = useRef<string>(playerName);
@@ -108,10 +131,39 @@ export default function App() {
         setCoopTransport('owlbear');
         localPlayerIdRef.current = joinedId;
         setPlayerId(joinedId);
+        setIsSpectator(false);
+        setSpectateOffer(null);
         setRoom(nextRoom);
         if (nextRoom.stage) setSelectedStage(nextRoom.stage);
         setErrorMsg(null);
         setScreenMode('ROOM_LOBBY');
+      },
+      onSpectateOffer: (offer) => {
+        setErrorMsg(null);
+        setSpectateOffer(offer);
+      },
+      onSpectatingJoined: (joinedId, nextRoom) => {
+        activeCoopModeRef.current = 'owlbear';
+        setCoopTransport('owlbear');
+        localPlayerIdRef.current = joinedId;
+        setPlayerId(joinedId);
+        setIsSpectator(true);
+        setSpectateOffer(null);
+        setRoom(nextRoom);
+        if (nextRoom.stage) setSelectedStage(nextRoom.stage);
+        setErrorMsg(null);
+        if (nextRoom.phase === 'LOBBY') {
+          soundManager.stopBgm();
+          viewRef.current?.resetToPreview();
+          setScreenMode('ROOM_LOBBY');
+        } else {
+          setScreenMode('IN_GAME');
+          if (nextRoom.phase === 'PLAYING') {
+            soundManager.startBgm();
+          } else {
+            soundManager.stopBgm();
+          }
+        }
       },
       onRoomUpdate: (nextRoom) => {
         setRoom(nextRoom);
@@ -131,6 +183,8 @@ export default function App() {
       },
       onRoomLeft: () => {
         soundManager.stopBgm();
+        setIsSpectator(false);
+        setSpectateOffer(null);
         setRoom(null);
         viewRef.current?.resetToPreview();
         localPlayerIdRef.current = coop.getPlayerId() ?? socketPlayerIdRef.current;
@@ -313,6 +367,8 @@ export default function App() {
           socketPlayerIdRef.current = joinedId;
           localPlayerIdRef.current = joinedId;
           setPlayerId(joinedId);
+          setIsSpectator(false);
+          setSpectateOffer(null);
           setRoom(nextRoom);
           if (nextRoom.stage) setSelectedStage(nextRoom.stage);
           setErrorMsg(null);
@@ -323,6 +379,38 @@ export default function App() {
               playerNameRef.current,
               obrRoleRef.current
             );
+          }
+          return;
+        }
+
+        if (type === 'room:spectate_offer' && msg.offer) {
+          setErrorMsg(null);
+          setSpectateOffer(msg.offer as SpectatorOffer);
+          return;
+        }
+
+        if (type === 'room:spectating') {
+          const joinedId = msg.playerId as string;
+          const nextRoom = msg.room as RoomInfo;
+          socketPlayerIdRef.current = joinedId;
+          localPlayerIdRef.current = joinedId;
+          setPlayerId(joinedId);
+          setIsSpectator(true);
+          setSpectateOffer(null);
+          setRoom(nextRoom);
+          if (nextRoom.stage) setSelectedStage(nextRoom.stage);
+          setErrorMsg(null);
+          if (nextRoom.phase === 'LOBBY') {
+            soundManager.stopBgm();
+            viewRef.current?.resetToPreview();
+            setScreenMode('ROOM_LOBBY');
+          } else {
+            setScreenMode('IN_GAME');
+            if (nextRoom.phase === 'PLAYING') {
+              soundManager.startBgm();
+            } else {
+              soundManager.stopBgm();
+            }
           }
           return;
         }
@@ -348,6 +436,8 @@ export default function App() {
 
         if (type === 'room:left') {
           soundManager.stopBgm();
+          setIsSpectator(false);
+          setSpectateOffer(null);
           setRoom(null);
           viewRef.current?.resetToPreview();
           setScreenMode('HOME_LOBBY');
@@ -412,6 +502,8 @@ export default function App() {
 
         if (screenModeRef.current !== 'SOLO_GAME') {
           soundManager.stopBgm();
+          setIsSpectator(false);
+          setSpectateOffer(null);
           setRoom(null);
           setCoopTransport('none');
           setScreenMode('CONNECTING');
@@ -447,6 +539,22 @@ export default function App() {
     }
   }, []);
 
+  const handleToggleMobileControls = useCallback(() => {
+    userToggledMobileRef.current = true;
+    setShowMobileControls((prev) => !prev);
+  }, []);
+
+  // Auto-enable touch controller if user touches screen on hybrid/mobile devices
+  useEffect(() => {
+    const onFirstTouch = (e: PointerEvent) => {
+      if (e.pointerType === 'touch' && !userToggledMobileRef.current) {
+        setShowMobileControls(true);
+      }
+    };
+    window.addEventListener('pointerdown', onFirstTouch, { passive: true });
+    return () => window.removeEventListener('pointerdown', onFirstTouch);
+  }, []);
+
   const handleStartSolo = useCallback(
     (stageOverride?: StageLevel) => {
       soundManager.unlock();
@@ -454,6 +562,7 @@ export default function App() {
         document.activeElement.blur();
       }
       heldKeysRef.current.clear();
+      touchMoveRef.current = { x: 0, y: 0 };
       lastSentMoveRef.current = { x: 0, y: 0 };
 
       const stageToPlay = stageOverride ?? selectedStageRef.current;
@@ -479,7 +588,6 @@ export default function App() {
       viewRef.current?.applyServerSnapshot(initialSnap);
       setHudSnapshot(initialSnap);
       setScreenMode('SOLO_GAME');
-      soundManager.startBgm();
     },
     [playerName]
   );
@@ -491,6 +599,7 @@ export default function App() {
       engine.phase = 'PAUSED';
       engine.setPlayerInput(SOLO_PLAYER_ID, 0, 0);
       heldKeysRef.current.clear();
+      touchMoveRef.current = { x: 0, y: 0 };
       soundManager.stopBgm();
     } else if (engine.phase === 'PAUSED') {
       engine.phase = 'PLAYING';
@@ -531,6 +640,7 @@ export default function App() {
   const handleCreateRoom = useCallback(() => {
     soundManager.unlock();
     setErrorMsg(null);
+    setSpectateOffer(null);
     if (shouldUseOwlbearCoop()) {
       activeCoopModeRef.current = 'owlbear';
       obrCoopRef.current?.createRoom(playerName, selectedStageRef.current);
@@ -565,6 +675,7 @@ export default function App() {
     (code: string) => {
       soundManager.unlock();
       setErrorMsg(null);
+      setSpectateOffer(null);
       if (shouldUseOwlbearCoop()) {
         activeCoopModeRef.current = 'owlbear';
         obrCoopRef.current?.joinRoom(code, playerName);
@@ -575,6 +686,27 @@ export default function App() {
     },
     [playerName, sendSocket, shouldUseOwlbearCoop]
   );
+
+  const handleConfirmSpectate = useCallback(() => {
+    if (!spectateOffer) return;
+    soundManager.unlock();
+    setErrorMsg(null);
+    if (shouldUseOwlbearCoop()) {
+      activeCoopModeRef.current = 'owlbear';
+      obrCoopRef.current?.spectateRoom(spectateOffer.code, playerName);
+      return;
+    }
+    activeCoopModeRef.current = 'ws';
+    sendSocket({
+      type: 'room:spectate',
+      name: playerName,
+      code: spectateOffer.code,
+    });
+  }, [playerName, sendSocket, shouldUseOwlbearCoop, spectateOffer]);
+
+  const handleCancelSpectate = useCallback(() => {
+    setSpectateOffer(null);
+  }, []);
 
   const handleToggleReady = useCallback(
     (nextReady: boolean) => {
@@ -672,7 +804,80 @@ export default function App() {
     }, 2200);
   }, [room]);
 
+  const handleSelectPrepRack = useCallback(
+    (rackId: string) => {
+      if (isSpectatorRef.current) return;
+      const mode = screenModeRef.current;
+      if (mode === 'SOLO_GAME') {
+        const engine = soloEngineRef.current;
+        if (engine && engine.selectPrepRack(SOLO_PLAYER_ID, rackId)) {
+          const snap = engine.getSnapshot();
+          viewRef.current?.applyServerSnapshot(snap);
+          setHudSnapshot(snap);
+        }
+        return;
+      }
+      if (mode === 'IN_GAME') {
+        if (activeCoopModeRef.current === 'owlbear' || obrCoopRef.current?.isInRoom()) {
+          obrCoopRef.current?.selectPrepRack(rackId);
+        } else {
+          sendSocket({ type: 'prep:select_rack', rackId });
+        }
+      }
+    },
+    [sendSocket]
+  );
+
+  const handleRollPrepCheck = useCallback(
+    (modifier: number) => {
+      if (isSpectatorRef.current) return;
+      const mode = screenModeRef.current;
+      if (mode === 'SOLO_GAME') {
+        const engine = soloEngineRef.current;
+        if (engine && engine.rollPrepSkillCheck(SOLO_PLAYER_ID, modifier)) {
+          const fx = engine.step(0);
+          if (fx.length > 0) viewRef.current?.applyFxEvents(fx);
+          const snap = engine.getSnapshot();
+          viewRef.current?.applyServerSnapshot(snap);
+          setHudSnapshot(snap);
+        }
+        return;
+      }
+      if (mode === 'IN_GAME') {
+        if (activeCoopModeRef.current === 'owlbear' || obrCoopRef.current?.isInRoom()) {
+          obrCoopRef.current?.rollPrepSkillCheck(modifier);
+        } else {
+          sendSocket({ type: 'prep:roll', modifier });
+        }
+      }
+    },
+    [sendSocket]
+  );
+
+  const handleStartRoundFromPrep = useCallback(() => {
+    const mode = screenModeRef.current;
+    soundManager.unlock();
+    if (mode === 'SOLO_GAME') {
+      const engine = soloEngineRef.current;
+      if (engine && engine.startRoundFromPrep()) {
+        const snap = engine.getSnapshot();
+        viewRef.current?.applyServerSnapshot(snap);
+        setHudSnapshot(snap);
+        soundManager.startBgm();
+      }
+      return;
+    }
+    if (mode === 'IN_GAME') {
+      if (activeCoopModeRef.current === 'owlbear' || obrCoopRef.current?.isInRoom()) {
+        obrCoopRef.current?.startRoundFromPrep();
+      } else {
+        sendSocket({ type: 'prep:start_round' });
+      }
+    }
+  }, [sendSocket]);
+
   const handlePlayerAction = useCallback(() => {
+    if (isSpectatorRef.current) return;
     const mode = screenModeRef.current;
     if (mode !== 'IN_GAME' && mode !== 'SOLO_GAME') return;
     const activePhase =
@@ -691,33 +896,57 @@ export default function App() {
     }
   }, [sendSocket]);
 
-  // Keyboard Listeners (strictly WASD for movement, SPACE for action)
-  useEffect(() => {
-    const syncMovement = () => {
+  const syncMovement = useCallback(
+    (fromTouch = false) => {
+      if (isSpectatorRef.current) return;
       const mode = screenModeRef.current;
       if (mode !== 'IN_GAME' && mode !== 'SOLO_GAME') return;
       const held = heldKeysRef.current;
-      const mx = (held.has('KeyD') ? 1 : 0) - (held.has('KeyA') ? 1 : 0);
-      const my = (held.has('KeyS') ? 1 : 0) - (held.has('KeyW') ? 1 : 0);
+      const kx = (held.has('KeyD') ? 1 : 0) - (held.has('KeyA') ? 1 : 0);
+      const ky = (held.has('KeyS') ? 1 : 0) - (held.has('KeyW') ? 1 : 0);
+      const mx = kx !== 0 || ky !== 0 ? kx : touchMoveRef.current.x;
+      const my = kx !== 0 || ky !== 0 ? ky : touchMoveRef.current.y;
 
       if (mode === 'SOLO_GAME') {
         soloEngineRef.current?.setPlayerInput(SOLO_PLAYER_ID, mx, my);
         return;
       }
 
-      if (
-        mx !== lastSentMoveRef.current.x ||
-        my !== lastSentMoveRef.current.y
-      ) {
-        lastSentMoveRef.current = { x: mx, y: my };
-        if (activeCoopModeRef.current === 'owlbear' || obrCoopRef.current?.isInRoom()) {
-          obrCoopRef.current?.sendInput(mx, my);
-        } else {
-          sendSocket({ type: 'player:input', moveX: mx, moveY: my });
-        }
+      const isStop = mx === 0 && my === 0;
+      const dx = Math.abs(mx - lastSentMoveRef.current.x);
+      const dy = Math.abs(my - lastSentMoveRef.current.y);
+      if (dx < 0.04 && dy < 0.04 && !isStop) return;
+      if (isStop && lastSentMoveRef.current.x === 0 && lastSentMoveRef.current.y === 0) {
+        return;
       }
-    };
 
+      const now = performance.now();
+      if (fromTouch && !isStop && now - lastTouchNetSendRef.current < 40) {
+        return;
+      }
+
+      lastSentMoveRef.current = { x: mx, y: my };
+      if (fromTouch) lastTouchNetSendRef.current = now;
+
+      if (activeCoopModeRef.current === 'owlbear' || obrCoopRef.current?.isInRoom()) {
+        obrCoopRef.current?.sendInput(mx, my);
+      } else {
+        sendSocket({ type: 'player:input', moveX: mx, moveY: my });
+      }
+    },
+    [sendSocket]
+  );
+
+  const handleTouchMove = useCallback(
+    (mx: number, my: number) => {
+      touchMoveRef.current = { x: mx, y: my };
+      syncMovement(true);
+    },
+    [syncMovement]
+  );
+
+  // Keyboard Listeners (strictly WASD for movement, SPACE for action)
+  useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       const isTyping =
@@ -767,18 +996,19 @@ export default function App() {
         e.code === 'KeyD'
       ) {
         heldKeysRef.current.add(e.code);
-        syncMovement();
+        syncMovement(false);
       }
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
       if (heldKeysRef.current.delete(e.code)) {
-        syncMovement();
+        syncMovement(false);
       }
     };
 
     const onBlur = () => {
       heldKeysRef.current.clear();
+      touchMoveRef.current = { x: 0, y: 0 };
       if (screenModeRef.current === 'SOLO_GAME') {
         soloEngineRef.current?.setPlayerInput(SOLO_PLAYER_ID, 0, 0);
       }
@@ -803,7 +1033,7 @@ export default function App() {
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);
     };
-  }, [handlePlayerAction, handleToggleMute, handleToggleSoloPause, sendSocket]);
+  }, [handlePlayerAction, handleToggleMute, handleToggleSoloPause, sendSocket, syncMovement]);
 
   // Isolated 60fps Canvas Render Loop (+ Solo Engine Simulation)
   useEffect(() => {
@@ -845,11 +1075,12 @@ export default function App() {
         const snap = engine.getSnapshot();
         view.applyServerSnapshot(snap);
 
-        if (
-          engine.phase !== prevPhase &&
-          (engine.phase === 'VICTORY' || engine.phase === 'GAME_OVER')
-        ) {
-          soundManager.stopBgm();
+        if (engine.phase !== prevPhase) {
+          if (engine.phase === 'PLAYING') {
+            soundManager.startBgm();
+          } else if (engine.phase === 'VICTORY' || engine.phase === 'GAME_OVER') {
+            soundManager.stopBgm();
+          }
         }
 
         if (engine.phase !== prevPhase || now - lastSoloHudSync >= 100) {
@@ -904,11 +1135,17 @@ export default function App() {
     void closeOwlbearGameModal();
   }, []);
 
+  const localPlayerForControls = isPlayingView
+    ? hudSnapshot.players.find((p) => p.id === playerId) ??
+      hudSnapshot.players[0] ??
+      null
+    : null;
+
   return (
-    <main className="relative h-screen w-screen overflow-hidden bg-[#C6DF9F]">
+    <main className="relative h-dvh w-screen overflow-hidden bg-[#C6DF9F]">
       <canvas
         ref={canvasRef}
-        className="block h-full w-full"
+        className="block h-full w-full touch-none"
         aria-label="Arena Kebun Berry Pokopia"
       />
 
@@ -955,6 +1192,10 @@ export default function App() {
           obrBroadcastSent={obrBroadcastSent}
           wsOffline={wsOffline}
           coopTransport={coopTransport}
+          isSpectator={isSpectator}
+          spectateOffer={spectateOffer}
+          onConfirmSpectate={handleConfirmSpectate}
+          onCancelSpectate={handleCancelSpectate}
         />
       )}
 
@@ -966,11 +1207,41 @@ export default function App() {
           localPrompt={viewRef.current?.localPrompt ?? null}
           muted={muted}
           onToggleMute={handleToggleMute}
+          showMobileControls={showMobileControls}
+          onToggleMobileControls={handleToggleMobileControls}
           isSolo={isSolo}
+          isSpectator={isSpectator}
+          spectatorCount={room?.spectatorCount ?? 0}
           onTogglePause={handleToggleSoloPause}
           onAction={handlePlayerAction}
+          onLeaveSpectate={handleLeaveRoom}
           isOwlbearModal={isOwlbearModal}
           onCloseOwlbearModal={handleCloseModal}
+        />
+      )}
+
+      {isPlayingView && !isSpectator && hudSnapshot.phase === 'PLAYING' && (
+        <MobileController
+          visible={showMobileControls}
+          active={hudSnapshot.phase === 'PLAYING'}
+          localPrompt={viewRef.current?.localPrompt ?? null}
+          heldTool={localPlayerForControls?.heldTool ?? null}
+          whistleCooldown={localPlayerForControls?.whistleCooldown ?? 0}
+          onMove={handleTouchMove}
+          onAction={handlePlayerAction}
+        />
+      )}
+
+      {isPlayingView && hudSnapshot.phase === 'PREP' && (
+        <PrepModal
+          snapshot={hudSnapshot}
+          localPlayerId={playerId}
+          isHost={isHost}
+          isSolo={isSolo}
+          isSpectator={isSpectator}
+          onSelectRack={handleSelectPrepRack}
+          onRollCheck={handleRollPrepCheck}
+          onStartRound={handleStartRoundFromPrep}
         />
       )}
 
@@ -979,6 +1250,7 @@ export default function App() {
           snapshot={hudSnapshot}
           isHost={isHost}
           isSolo={isSolo}
+          isSpectator={isSpectator}
           onResume={handleToggleSoloPause}
           onRestart={handleRestart}
           onNextStage={handleNextStage}

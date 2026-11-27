@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   Check,
   Copy,
+  Eye,
   KeyRound,
   LogOut,
   Play,
@@ -23,7 +24,12 @@ import {
   getOrderTargets,
 } from '../game/constants.ts';
 import type { OwlbearRoomInvite } from '../game/owlbear.ts';
-import type { RoomInfo, ScreenMode, StageLevel } from '../game/types.ts';
+import type {
+  RoomInfo,
+  ScreenMode,
+  SpectatorOffer,
+  StageLevel,
+} from '../game/types.ts';
 import {
   BerrySvg,
   MiniBerryLeafIcon,
@@ -62,6 +68,10 @@ interface LobbyOverlayProps {
   obrBroadcastSent?: boolean;
   wsOffline?: boolean;
   coopTransport?: 'ws' | 'owlbear' | 'none';
+  isSpectator?: boolean;
+  spectateOffer?: SpectatorOffer | null;
+  onConfirmSpectate?: () => void;
+  onCancelSpectate?: () => void;
 }
 
 const RpgCornerStuds: React.FC<{ size?: 'lg' | 'md' | 'sm' }> = ({
@@ -121,6 +131,10 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
   obrBroadcastSent = false,
   wsOffline = false,
   coopTransport = 'none',
+  isSpectator = false,
+  spectateOffer = null,
+  onConfirmSpectate,
+  onCancelSpectate,
 }) => {
   const [joinCode, setJoinCode] = useState('');
   const [copied, setCopied] = useState(false);
@@ -146,7 +160,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
   const activeRoomStage = room?.stage ?? selectedStage;
 
   return (
-    <div className="cozy-pokopia-backdrop fixed inset-0 z-30 flex items-center justify-center p-2.5 sm:p-4 overflow-y-auto">
+    <div className="cozy-pokopia-backdrop fixed inset-0 z-30 flex items-start sm:items-center justify-center p-2.5 sm:p-4 overflow-y-auto">
       {/* Top-Left Close Button when inside Owlbear Modal */}
       {isOwlbearModal && onCloseOwlbearModal && (
         <button
@@ -172,7 +186,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
       </button>
 
       {/* Ornate Emerald-Gold RPG Outer Frame */}
-      <div className="relative w-full max-w-[1040px] rounded-[20px] border-[3.5px] border-[#2B4B36] bg-[#4C9E69] p-[5px] shadow-[0_8px_0_rgba(32,58,41,0.34)]">
+      <div className="relative my-auto w-full max-w-[1040px] rounded-[20px] border-[3.5px] border-[#2B4B36] bg-[#4C9E69] p-[5px] shadow-[0_8px_0_rgba(32,58,41,0.34)]">
         <RpgCornerStuds size="lg" />
 
         <div className="rounded-[15px] border-[2.5px] border-[#4A2816] bg-[#F2CA6B] p-[4px]">
@@ -257,6 +271,55 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                     className="mt-3 w-full max-w-2xl rounded-xl border-[2.5px] border-[#992B25] bg-[#FFE4E2] px-4 py-2 text-center text-xs font-bold text-[#8E221D] shadow-[0_3px_0_#992B25]"
                   >
                     {errorMsg}
+                  </div>
+                )}
+
+                {spectateOffer && (
+                  <div
+                    role="dialog"
+                    aria-label="Konfirmasi Mode Penonton"
+                    className="mt-3 flex w-full max-w-2xl flex-wrap items-center justify-between gap-3 rounded-xl border-[2.5px] border-[#4A2816] bg-[#E8F4FD] px-4 py-2.5 shadow-[0_3px_0_#4A2816]"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border-2 border-[#4A2816] bg-[#3B82F6] text-white">
+                        <Eye className="h-4 w-4" />
+                      </span>
+                      <div className="min-w-0 text-xs leading-snug text-[#1E3A5F]">
+                        <div className="font-extrabold">
+                          Permainan di room{' '}
+                          <span className="font-mono-tabular">{spectateOffer.code}</span>{' '}
+                          sedang berlangsung ({spectateOffer.playerCount}/
+                          {spectateOffer.maxPlayers} pemain ·{' '}
+                          {STAGE_CONFIG[spectateOffer.stage]?.label ??
+                            `Stage ${spectateOffer.stage}`}
+                          )
+                        </div>
+                        <div className="font-semibold text-[#335C81]">
+                          Masuk sebagai penonton untuk menyaksikan jalannya kebun?
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {onCancelSpectate && (
+                        <button
+                          type="button"
+                          onClick={onCancelSpectate}
+                          className="rounded-full border-2 border-[#4A2816] bg-[#FFFDF8] px-3.5 py-1.5 font-display text-xs font-bold text-[#4A2816] shadow-[0_2px_0_#4A2816] hover:bg-[#FFF2CC] active:translate-y-0.5 whitespace-nowrap"
+                        >
+                          Batal
+                        </button>
+                      )}
+                      {onConfirmSpectate && (
+                        <button
+                          type="button"
+                          onClick={onConfirmSpectate}
+                          className="flex items-center gap-1.5 rounded-full border-2 border-[#4A2816] bg-[#2563EB] px-4 py-1.5 font-display text-xs font-bold text-white shadow-[0_2px_0_#4A2816] hover:bg-[#1D4ED8] active:translate-y-0.5 whitespace-nowrap"
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                          <span>Gabung Penonton</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )}
 
@@ -441,7 +504,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                             WASD
                           </span>
                           <span className="text-xs font-bold text-[#4A301C]">
-                            Gerak
+                            Gerak / Joystick HP
                           </span>
                         </div>
                         <div className="flex items-center gap-2">
@@ -449,7 +512,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                             SPACE
                           </span>
                           <span className="text-xs font-bold text-[#4A301C]">
-                            Aksi
+                            Aksi / Tombol HP
                           </span>
                         </div>
                       </div>
@@ -634,9 +697,15 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                   <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-[#4B3824]">
                     <span className="tabular-nums">
                       Daftar Pemain ({room.members.length}/{room.maxPlayers})
+                      {room.members.length > 5 ? ' · Kebun 4×4' : ''}
+                      {(room.spectatorCount ?? 0) > 0
+                        ? ` · ${room.spectatorCount} Penonton`
+                        : ''}
                       {coopTransport === 'owlbear' ? ' · Server Meja Owlbear' : ''}
                     </span>
-                    <span>Kontrol: W A S D · SPACE</span>
+                    <span>
+                      {isSpectator ? 'Anda sedang menonton' : 'Kontrol: W A S D · SPACE'}
+                    </span>
                   </div>
 
                   <div className="mt-2 grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
@@ -733,6 +802,13 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                         <Play className="h-4 w-4 fill-current" />
                         <span>Mulai Permainan</span>
                       </button>
+                    </div>
+                  ) : isSpectator ? (
+                    <div className="flex items-center gap-2 rounded-full border-2 border-[#4A2816] bg-[#E8F4FD] px-4 py-2 text-xs font-extrabold text-[#1E3A5F]">
+                      <Eye className="h-4 w-4 text-[#2563EB]" />
+                      <span>
+                        Mode Penonton · Tetap menonton sampai keluar room
+                      </span>
                     </div>
                   ) : (
                     <button

@@ -1,4 +1,10 @@
-export type RoomPhase = 'LOBBY' | 'PLAYING' | 'PAUSED' | 'VICTORY' | 'GAME_OVER';
+export type RoomPhase =
+  | 'LOBBY'
+  | 'PREP'
+  | 'PLAYING'
+  | 'PAUSED'
+  | 'VICTORY'
+  | 'GAME_OVER';
 
 export type StageLevel = 1 | 2 | 3;
 
@@ -37,6 +43,13 @@ export interface LobbyMember {
   isReady: boolean;
 }
 
+export interface SpectatorOffer {
+  code: string;
+  stage: StageLevel;
+  playerCount: number;
+  maxPlayers: number;
+}
+
 export interface RoomInfo {
   code: string;
   phase: RoomPhase;
@@ -44,6 +57,7 @@ export interface RoomInfo {
   maxPlayers: number;
   hostId: string;
   members: LobbyMember[];
+  spectatorCount?: number;
   targets: OrderCounts;
 }
 
@@ -70,6 +84,17 @@ export interface InteractPrompt {
   kind: 'rack' | 'plot' | 'well' | 'crate' | 'critter' | 'whistle';
 }
 
+export interface SkillCheckState {
+  rackId: string | null;
+  toolType: ToolType | null;
+  modifier: number;
+  naturalRoll: number | null;
+  totalRoll: number | null;
+  dc: number;
+  rolled: boolean;
+  success: boolean;
+}
+
 export interface PlayerState {
   id: string;
   name: string;
@@ -83,7 +108,10 @@ export interface PlayerState {
   walkPhase: number;
   heldRackId: string | null;
   heldTool: ToolType | null;
+  buffedTool: ToolType | null;
+  skillCheck: SkillCheckState;
   whistleAnimTimer: number;
+  whistleCooldown: number;
   squashTimer: number;
 }
 
@@ -101,6 +129,7 @@ export interface BerryPlotState {
   needsWater: boolean;
   hasWeeds: boolean;
   vitality: number;
+  boostCooldown: number;
   shakeTimer: number;
   hitFlash: number;
   popTimer: number;
@@ -189,7 +218,9 @@ export interface FxEvent {
     | 'weed'
     | 'wither'
     | 'pump'
-    | 'weather';
+    | 'weather'
+    | 'dice_success'
+    | 'dice_fail';
   playerId?: string;
   x?: number;
   y?: number;

@@ -14,6 +14,7 @@ import {
   WATER_WELL_POS,
   WELL_INITIAL_WATER,
   WELL_MAX_WATER,
+  WHISTLE_BUFF_RANGE,
   WHISTLE_REPEL_RANGE,
   WORLD_WIDTH,
   getOrderTargets,
@@ -143,6 +144,7 @@ export class ClientWorldView {
           needsWater: false,
           hasWeeds: false,
           vitality: 100,
+          boostCooldown: 0,
           shakeTimer: 0,
           hitFlash: 0,
           popTimer: 0,
@@ -185,7 +187,11 @@ export class ClientWorldView {
   public applyServerSnapshot(next: WorldSnapshot): void {
     const prevPhase = this.snapshot.phase;
     this.snapshot = next;
-    if (prevPhase === 'LOBBY' && next.phase === 'PLAYING' && !this.berryMasterSpeech) {
+    if (
+      (prevPhase === 'LOBBY' || prevPhase === 'PREP') &&
+      next.phase === 'PLAYING' &&
+      !this.berryMasterSpeech
+    ) {
       this.setBerryMasterSpeech('Ayo isi Peti Setoran sebelum senja!', 3.2);
     }
 
@@ -199,14 +205,17 @@ export class ClientWorldView {
     for (const p of next.players) {
       const existing = this.renderPlayers.get(p.id);
       if (!existing) {
-        this.renderPlayers.set(p.id, { ...p });
+        this.renderPlayers.set(p.id, { ...p, skillCheck: { ...p.skillCheck } });
       } else {
         existing.facingX = p.facingX;
         existing.facingY = p.facingY;
         existing.walkPhase = p.walkPhase;
         existing.heldRackId = p.heldRackId;
         existing.heldTool = p.heldTool;
+        existing.buffedTool = p.buffedTool;
+        existing.skillCheck = { ...p.skillCheck };
         existing.whistleAnimTimer = p.whistleAnimTimer;
+        existing.whistleCooldown = p.whistleCooldown;
         existing.squashTimer = p.squashTimer;
         existing.name = p.name;
         existing.capColor = p.capColor;
@@ -269,6 +278,8 @@ export class ClientWorldView {
         this.setBerryMasterSpeech('Terima kasih! Panen Berry luar biasa!', 4);
         this.berryMasterCheerTimer = 2.0;
       } else if (ev.type === 'gameover') soundManager.playGameOver();
+      else if (ev.type === 'dice_success') soundManager.playDiceSuccess();
+      else if (ev.type === 'dice_fail') soundManager.playDiceFail();
 
       if (ev.crateBounce) {
         this.crateBounceTimer = 0.35;
@@ -285,6 +296,13 @@ export class ClientWorldView {
       }
 
       if (ev.type === 'whistle' && ev.x !== undefined && ev.y !== undefined && !ev.particleKind) {
+        const whistleOwner = ev.playerId
+          ? this.renderPlayers.get(ev.playerId)
+          : undefined;
+        const maxRingRadius =
+          whistleOwner?.buffedTool === 'defender_whistle'
+            ? WHISTLE_BUFF_RANGE
+            : WHISTLE_REPEL_RANGE;
         this.particles.push({
           kind: 'ring',
           x: ev.x,
@@ -292,7 +310,7 @@ export class ClientWorldView {
           vx: 0,
           vy: 0,
           radius: 18,
-          maxRadius: WHISTLE_REPEL_RANGE,
+          maxRadius: maxRingRadius,
           color: '#F4A261',
           alpha: 0.9,
           life: 0,
@@ -513,16 +531,23 @@ export class ClientWorldView {
       : null;
 
     if (player.heldTool === 'defender_whistle') {
+      const whistleRange =
+        player.buffedTool === 'defender_whistle'
+          ? WHISTLE_BUFF_RANGE
+          : WHISTLE_REPEL_RANGE;
       for (const c of this.renderCritters.values()) {
         if (
           c.state !== 'fleeing' &&
-          dist(player.x, player.y, c.x, c.y) <= WHISTLE_REPEL_RANGE
+          dist(player.x, player.y, c.x, c.y) <= whistleRange
         ) {
           return {
             x: c.x,
             y: c.y - 42,
-            label: `Usir! (${c.hp}/${c.maxHp})`,
-            accentColor: '#E76F51',
+            label:
+              player.whistleCooldown > 0
+                ? `Jeda Peluit (${player.whistleCooldown.toFixed(1)}d)`
+                : `Usir! (${c.hp}/${c.maxHp})`,
+            accentColor: player.whistleCooldown > 0 ? '#9CA3AF' : '#E76F51',
             kind: 'critter',
           };
         }
@@ -575,41 +600,43 @@ export class ClientWorldView {
       };
     }
 
-    // Nearest rack
-    let bestRack: ToolRackState | null = null;
-    let bestRackDist = INTERACT_RANGE_RACK;
-    for (const r of this.snapshot.racks) {
-      const d = dist(player.x, player.y, r.x + 28, r.y);
-      if (d <= bestRackDist) {
-        bestRackDist = d;
-        bestRack = r;
+    // Nearest rack (only interactive in Solo mode; Co-op locks tools per round)
+    if (this.snapshot.players.length <= 1) {
+      let bestRack: ToolRackState | null = null;
+      let bestRackDist = INTERACT_RANGE_RACK;
+      for (const r of this.snapshot.racks) {
+        const d = dist(player.x, player.y, r.x + 28, r.y);
+        if (d <= bestRackDist) {
+          bestRackDist = d;
+          bestRack = r;
+        }
       }
-    }
 
-    if (bestRack) {
-      if (player.heldRackId === null && bestRack.occupiedByPlayerId === null) {
-        return {
-          x: bestRack.x + 26,
-          y: bestRack.y - 34,
-          label: `Ambil ${bestRack.shortName}`,
-          accentColor: TOOL_CONFIG[bestRack.toolType].accentColor,
-          kind: 'rack',
-        };
-      }
-      if (player.heldRackId === bestRack.rackId) {
-        return {
-          x: bestRack.x + 26,
-          y: bestRack.y - 34,
-          label: `Taruh ${bestRack.shortName}`,
-          accentColor: TOOL_CONFIG[bestRack.toolType].accentColor,
-          kind: 'rack',
-        };
+      if (bestRack) {
+        if (player.heldRackId === null && bestRack.occupiedByPlayerId === null) {
+          return {
+            x: bestRack.x + 26,
+            y: bestRack.y - 34,
+            label: `Ambil ${bestRack.shortName}`,
+            accentColor: TOOL_CONFIG[bestRack.toolType].accentColor,
+            kind: 'rack',
+          };
+        }
+        if (player.heldRackId === bestRack.rackId) {
+          return {
+            x: bestRack.x + 26,
+            y: bestRack.y - 34,
+            label: `Taruh ${bestRack.shortName}`,
+            accentColor: TOOL_CONFIG[bestRack.toolType].accentColor,
+            kind: 'rack',
+          };
+        }
       }
     }
 
     // Nearest plot
     let bestPlot: BerryPlotState | null = null;
-    let bestPlotDist = INTERACT_RANGE_PLOT;
+    let bestPlotDist = this.snapshot.plots.length > 9 ? 66 : INTERACT_RANGE_PLOT;
     for (const p of this.snapshot.plots) {
       const d = dist(player.x, player.y, p.x, p.y);
       if (d <= bestPlotDist) {
@@ -619,17 +646,34 @@ export class ClientWorldView {
     }
 
     if (bestPlot && bestPlot.stage !== 'withered' && heldRack) {
-      if (
-        player.heldTool === 'wailmer_pail' &&
-        (bestPlot.needsWater || bestPlot.waterLevel < 0.85)
-      ) {
-        return {
-          x: bestPlot.x,
-          y: bestPlot.y - 54,
-          label: heldRack.pailWater > 0 ? 'Siram' : 'Isi Air Dulu!',
-          accentColor: '#4895EF',
-          kind: 'plot',
-        };
+      if (player.heldTool === 'wailmer_pail') {
+        const isRainBoostReady =
+          this.snapshot.weather === 'rainy' &&
+          bestPlot.stage !== 'ripe' &&
+          bestPlot.boostCooldown <= 0;
+        if (bestPlot.needsWater || bestPlot.waterLevel < 0.85) {
+          return {
+            x: bestPlot.x,
+            y: bestPlot.y - 54,
+            label:
+              heldRack.pailWater <= 0
+                ? 'Isi Air Dulu!'
+                : isRainBoostReady
+                  ? 'Siram Subur!'
+                  : 'Siram',
+            accentColor: isRainBoostReady ? '#0EA5E9' : '#4895EF',
+            kind: 'plot',
+          };
+        }
+        if (isRainBoostReady) {
+          return {
+            x: bestPlot.x,
+            y: bestPlot.y - 54,
+            label: heldRack.pailWater > 0 ? 'Siram Subur!' : 'Isi Air Dulu!',
+            accentColor: '#0EA5E9',
+            kind: 'plot',
+          };
+        }
       }
       if (player.heldTool === 'garden_rake' && bestPlot.hasWeeds) {
         return {

@@ -210,6 +210,23 @@ class SoundManager {
     });
   }
 
+  public playDiceRoll(): void {
+    this.tone(320, 0.045, 'triangle', 0.1, 0, 460);
+    this.tone(410, 0.045, 'triangle', 0.09, 0.05, 560);
+  }
+
+  public playDiceSuccess(): void {
+    this.tone(523.25, 0.1, 'triangle', 0.14, 0);
+    this.tone(659.25, 0.11, 'triangle', 0.14, 0.06);
+    this.tone(783.99, 0.12, 'triangle', 0.14, 0.12);
+    this.tone(1046.5, 0.24, 'sine', 0.15, 0.18);
+  }
+
+  public playDiceFail(): void {
+    this.tone(293.66, 0.12, 'triangle', 0.1, 0, 240);
+    this.tone(220, 0.18, 'sine', 0.1, 0.09, 185);
+  }
+
   public startBgm(): void {
     if (this.muted || this.bgmActive) return;
     this.bgmActive = true;

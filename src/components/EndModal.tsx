@@ -12,6 +12,7 @@ interface EndModalProps {
   snapshot: WorldSnapshot;
   isHost: boolean;
   isSolo?: boolean;
+  isSpectator?: boolean;
   onResume?: () => void;
   onRestart: () => void;
   onNextStage?: () => void;
@@ -23,6 +24,7 @@ export const EndModal: React.FC<EndModalProps> = ({
   snapshot,
   isHost,
   isSolo = false,
+  isSpectator = false,
   onResume,
   onRestart,
   onNextStage,
@@ -213,6 +215,20 @@ export const EndModal: React.FC<EndModalProps> = ({
             >
               <RotateCcw className="h-4 w-4" />
               <span>Main Lagi</span>
+            </button>
+          </div>
+        ) : isSpectator ? (
+          <div className="mt-6 flex w-full flex-col items-center gap-3">
+            <p className="text-xs font-bold text-[#1E3A5F]">
+              Anda berada di Mode Penonton. Tetap menunggu ronde berikutnya atau keluar room untuk ikut bermain.
+            </p>
+            <button
+              type="button"
+              onClick={onLeaveRoom}
+              className="flex items-center gap-2 rounded-full border-[2.5px] border-[#4A2816] bg-[#FFFDF8] px-5 py-2 font-display text-xs font-bold text-[#4A2816] shadow-[0_4px_0_#4A2816] transition-transform duration-150 hover:-translate-y-0.5 hover:bg-[#FFF2CC] active:translate-y-[3px] active:shadow-[0_1px_0_#4A2816] whitespace-nowrap"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              <span>Keluar Room</span>
             </button>
           </div>
         ) : (

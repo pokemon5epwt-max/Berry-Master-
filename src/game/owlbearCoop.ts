@@ -17,6 +17,7 @@ import type {
   LobbyMember,
   RoomInfo,
   RoomPhase,
+  SpectatorOffer,
   StageLevel,
   WorldSnapshot,
 } from './types.ts';
@@ -35,10 +36,13 @@ interface HostRoomRecord {
   stage: StageLevel;
   hostId: string;
   members: LobbyMember[];
+  spectators: Map<string, string>;
 }
 
 export interface OwlbearCoopCallbacks {
   onRoomJoined: (playerId: string, room: RoomInfo) => void;
+  onSpectateOffer: (offer: SpectatorOffer) => void;
+  onSpectatingJoined: (playerId: string, room: RoomInfo) => void;
   onRoomUpdate: (room: RoomInfo) => void;
   onRoomLeft: () => void;
   onError: (message: string) => void;
@@ -84,6 +88,7 @@ export class OwlbearCoopClient {
 
   // Guest state
   private guestRoomCode: string | null = null;
+  private isGuestSpectator = false;
   private guestPingTimer: number | null = null;
   private lastHostSeenAt = 0;
   private pendingJoin: { code: string; timer: number } | null = null;
@@ -159,6 +164,7 @@ export class OwlbearCoopClient {
       stage,
       hostId: this.myId,
       members: [hostMember],
+      spectators: new Map<string, string>(),
     };
 
     const roomInfo = this.toHostRoomInfo();
@@ -199,8 +205,40 @@ export class OwlbearCoopClient {
     });
   }
 
+  public spectateRoom(rawCode: string, rawName: string): void {
+    if (!this.myId) {
+      this.callbacks.onError('Koneksi meja Owlbear belum siap.');
+      return;
+    }
+
+    const code = rawCode.trim().toUpperCase();
+    if (!code) {
+      this.callbacks.onError('Masukkan kode room terlebih dahulu.');
+      return;
+    }
+
+    this.resetAllRoomState(false);
+    const name = sanitizeName(rawName);
+
+    const timeoutId = window.setTimeout(() => {
+      if (this.pendingJoin && this.pendingJoin.code === code) {
+        this.pendingJoin = null;
+        this.callbacks.onError(
+          'Room tidak ditemukan di meja Owlbear atau sudah ditutup.'
+        );
+      }
+    }, 3200);
+
+    this.pendingJoin = { code, timer: timeoutId };
+    this.sendRemote({
+      type: 'coop:spectate_req',
+      code,
+      name,
+    });
+  }
+
   public setReady(isReady: boolean): void {
-    if (!this.guestRoomCode) return;
+    if (!this.guestRoomCode || this.isGuestSpectator) return;
     this.sendRemote({
       type: 'coop:ready',
       code: this.guestRoomCode,
@@ -260,7 +298,80 @@ export class OwlbearCoopClient {
     this.callbacks.onRoomLeft();
   }
 
+  public selectPrepRack(rackId: string): void {
+    if (this.isGuestSpectator) return;
+    if (this.hostRoom && this.hostRoom.phase === 'PREP' && this.hostEngine && this.myId) {
+      if (this.hostEngine.selectPrepRack(this.myId, rackId)) {
+        const snapshot = this.hostEngine.getSnapshot();
+        this.callbacks.onWorldSnapshot(snapshot);
+        this.sendRemote({
+          type: 'coop:snapshot',
+          code: this.hostRoom.code,
+          snapshot,
+        });
+      }
+      return;
+    }
+    if (this.guestRoomCode) {
+      this.sendRemote({
+        type: 'coop:prep_select',
+        code: this.guestRoomCode,
+        rackId,
+      });
+    }
+  }
+
+  public rollPrepSkillCheck(modifier: number): void {
+    if (this.isGuestSpectator) return;
+    if (this.hostRoom && this.hostRoom.phase === 'PREP' && this.hostEngine && this.myId) {
+      if (this.hostEngine.rollPrepSkillCheck(this.myId, modifier)) {
+        const fx = this.hostEngine.step(0);
+        const snapshot = this.hostEngine.getSnapshot();
+        this.callbacks.onWorldSnapshot(snapshot);
+        if (fx.length > 0) {
+          this.callbacks.onWorldFx(fx);
+          this.sendRemote({
+            type: 'coop:fx',
+            code: this.hostRoom.code,
+            events: fx,
+          });
+        }
+        this.sendRemote({
+          type: 'coop:snapshot',
+          code: this.hostRoom.code,
+          snapshot,
+        });
+      }
+      return;
+    }
+    if (this.guestRoomCode) {
+      this.sendRemote({
+        type: 'coop:prep_roll',
+        code: this.guestRoomCode,
+        modifier,
+      });
+    }
+  }
+
+  public startRoundFromPrep(): void {
+    if (!this.hostRoom || this.hostRoom.phase !== 'PREP' || !this.hostEngine) return;
+    if (this.hostEngine.startRoundFromPrep()) {
+      this.hostRoom.phase = this.hostEngine.phase;
+      const roomInfo = this.toHostRoomInfo();
+      const snapshot = this.hostEngine.getSnapshot();
+      this.sendRemote({ type: 'coop:room_update', room: roomInfo });
+      this.sendRemote({
+        type: 'coop:snapshot',
+        code: this.hostRoom.code,
+        snapshot,
+      });
+      this.callbacks.onRoomUpdate(roomInfo);
+      this.callbacks.onWorldSnapshot(snapshot);
+    }
+  }
+
   public sendInput(moveX: number, moveY: number): void {
+    if (this.isGuestSpectator) return;
     if (this.hostRoom && this.hostRoom.phase === 'PLAYING' && this.hostEngine && this.myId) {
       this.hostEngine.setPlayerInput(this.myId, moveX, moveY);
       return;
@@ -276,6 +387,7 @@ export class OwlbearCoopClient {
   }
 
   public sendAction(): void {
+    if (this.isGuestSpectator) return;
     if (this.hostRoom && this.hostRoom.phase === 'PLAYING' && this.hostEngine && this.myId) {
       this.hostEngine.handlePlayerAction(this.myId);
       return;
@@ -322,6 +434,7 @@ export class OwlbearCoopClient {
       maxPlayers: MAX_ROOM_PLAYERS,
       hostId: room.hostId,
       members: room.members.map((m) => ({ ...m })),
+      spectatorCount: room.spectators.size,
       targets: getOrderTargets(Math.max(2, room.members.length), room.stage),
     };
   }
@@ -364,6 +477,15 @@ export class OwlbearCoopClient {
         }
       }
 
+      for (const spectatorId of Array.from(room.spectators.keys())) {
+        const lastSeen = this.memberLastSeen.get(spectatorId) ?? now;
+        if (now - lastSeen > GUEST_STALE_MS) {
+          room.spectators.delete(spectatorId);
+          this.memberLastSeen.delete(spectatorId);
+          changed = true;
+        }
+      }
+
       if (changed) {
         const info = this.toHostRoomInfo();
         this.sendRemote({ type: 'coop:room_update', room: info });
@@ -386,11 +508,11 @@ export class OwlbearCoopClient {
     if (!this.hostRoom) return;
     this.stopHostEngineLoop();
 
-    this.hostRoom.phase = 'PLAYING';
     this.hostEngine = new ServerFarmEngine(
       this.hostRoom.members,
       this.hostRoom.stage
     );
+    this.hostRoom.phase = this.hostEngine.phase;
     this.hostTickCount = 0;
 
     const roomInfo = this.toHostRoomInfo();
@@ -410,13 +532,14 @@ export class OwlbearCoopClient {
     this.hostTickTimer = window.setInterval(() => {
       const room = this.hostRoom;
       const engine = this.hostEngine;
-      if (!room || !engine || room.phase !== 'PLAYING') {
+      if (!room || !engine || (room.phase !== 'PREP' && room.phase !== 'PLAYING')) {
         this.stopHostEngineLoop();
         return;
       }
 
       this.hostTickCount++;
       const dt = HOST_TICK_MS / 1000;
+      const prevPhase = engine.phase;
       const fx = engine.step(dt);
       const snapshot = engine.getSnapshot();
 
@@ -430,8 +553,9 @@ export class OwlbearCoopClient {
         });
       }
 
+      const phaseChanged = engine.phase !== prevPhase;
       const ended = engine.phase === 'VICTORY' || engine.phase === 'GAME_OVER';
-      if (ended || this.hostTickCount % SNAPSHOT_EVERY_N_TICKS === 0) {
+      if (phaseChanged || ended || this.hostTickCount % SNAPSHOT_EVERY_N_TICKS === 0) {
         this.sendRemote({
           type: 'coop:snapshot',
           code: room.code,
@@ -439,12 +563,16 @@ export class OwlbearCoopClient {
         });
       }
 
+      if (phaseChanged) {
+        room.phase = engine.phase;
+        const updatedInfo = this.toHostRoomInfo();
+        this.sendRemote({ type: 'coop:room_update', room: updatedInfo });
+        this.callbacks.onRoomUpdate(updatedInfo);
+      }
+
       if (ended) {
         room.phase = engine.phase;
         this.stopHostEngineLoop();
-        const finalInfo = this.toHostRoomInfo();
-        this.sendRemote({ type: 'coop:room_update', room: finalInfo });
-        this.callbacks.onRoomUpdate(finalInfo);
       }
     }, HOST_TICK_MS);
   }
@@ -466,6 +594,7 @@ export class OwlbearCoopClient {
       }
       if (Date.now() - this.lastHostSeenAt > HOST_STALE_MS) {
         this.guestRoomCode = null;
+        this.isGuestSpectator = false;
         this.stopGuestKeepalive();
         this.callbacks.onRoomLeft();
         this.callbacks.onError('Koneksi ke Host Owlbear terputus.');
@@ -511,6 +640,7 @@ export class OwlbearCoopClient {
     if (this.guestRoomCode) {
       const code = this.guestRoomCode;
       this.guestRoomCode = null;
+      this.isGuestSpectator = false;
       this.stopGuestKeepalive();
       if (notifyPeers) {
         this.sendRemote({ type: 'coop:leave', code });
@@ -556,9 +686,14 @@ export class OwlbearCoopClient {
 
         if (room.phase !== 'LOBBY') {
           this.sendRemote({
-            type: 'coop:error',
+            type: 'coop:spectate_offer',
             targetId: senderId,
-            message: 'Permainan sedang berlangsung, tunggu di lobi.',
+            offer: {
+              code: room.code,
+              stage: room.stage,
+              playerCount: room.members.length,
+              maxPlayers: MAX_ROOM_PLAYERS,
+            },
           });
           return;
         }
@@ -606,8 +741,53 @@ export class OwlbearCoopClient {
         return;
       }
 
+      if (type === 'coop:spectate_req' && typeof msg.code === 'string') {
+        if (msg.code.trim().toUpperCase() !== room.code) return;
+        const guestName = sanitizeName(
+          typeof msg.name === 'string' ? msg.name : 'Penonton'
+        );
+        room.spectators.set(senderId, guestName);
+        this.memberLastSeen.set(senderId, Date.now());
+
+        const info = this.toHostRoomInfo();
+        this.sendRemote({ type: 'coop:spectating', targetId: senderId, room: info });
+        if (this.hostEngine) {
+          this.sendRemote({
+            type: 'coop:snapshot',
+            code: room.code,
+            snapshot: this.hostEngine.getSnapshot(),
+          });
+        }
+        this.sendRemote({ type: 'coop:room_update', room: info });
+        this.callbacks.onRoomUpdate(info);
+        return;
+      }
+
       if (msg.code !== room.code) return;
       this.memberLastSeen.set(senderId, Date.now());
+
+      if (type === 'coop:leave') {
+        if (room.spectators.delete(senderId)) {
+          this.memberLastSeen.delete(senderId);
+          const info = this.toHostRoomInfo();
+          this.sendRemote({ type: 'coop:room_update', room: info });
+          this.callbacks.onRoomUpdate(info);
+          return;
+        }
+        const idx = room.members.findIndex((m) => m.id === senderId);
+        if (idx === -1) return;
+        room.members.splice(idx, 1);
+        this.memberLastSeen.delete(senderId);
+        if (this.hostEngine) {
+          this.hostEngine.removePlayer(senderId);
+        }
+        const info = this.toHostRoomInfo();
+        this.sendRemote({ type: 'coop:room_update', room: info });
+        this.callbacks.onRoomUpdate(info);
+        return;
+      }
+
+      if (room.spectators.has(senderId)) return;
 
       if (type === 'coop:ready') {
         if (room.phase !== 'LOBBY') return;
@@ -620,17 +800,40 @@ export class OwlbearCoopClient {
         return;
       }
 
-      if (type === 'coop:leave') {
-        const idx = room.members.findIndex((m) => m.id === senderId);
-        if (idx === -1) return;
-        room.members.splice(idx, 1);
-        this.memberLastSeen.delete(senderId);
-        if (this.hostEngine) {
-          this.hostEngine.removePlayer(senderId);
+      if (type === 'coop:prep_select' && room.phase === 'PREP' && this.hostEngine) {
+        const rackId = typeof msg.rackId === 'string' ? msg.rackId : '';
+        if (this.hostEngine.selectPrepRack(senderId, rackId)) {
+          const snapshot = this.hostEngine.getSnapshot();
+          this.callbacks.onWorldSnapshot(snapshot);
+          this.sendRemote({
+            type: 'coop:snapshot',
+            code: room.code,
+            snapshot,
+          });
         }
-        const info = this.toHostRoomInfo();
-        this.sendRemote({ type: 'coop:room_update', room: info });
-        this.callbacks.onRoomUpdate(info);
+        return;
+      }
+
+      if (type === 'coop:prep_roll' && room.phase === 'PREP' && this.hostEngine) {
+        const modifier = typeof msg.modifier === 'number' ? msg.modifier : 0;
+        if (this.hostEngine.rollPrepSkillCheck(senderId, modifier)) {
+          const fx = this.hostEngine.step(0);
+          const snapshot = this.hostEngine.getSnapshot();
+          this.callbacks.onWorldSnapshot(snapshot);
+          if (fx.length > 0) {
+            this.callbacks.onWorldFx(fx);
+            this.sendRemote({
+              type: 'coop:fx',
+              code: room.code,
+              events: fx,
+            });
+          }
+          this.sendRemote({
+            type: 'coop:snapshot',
+            code: room.code,
+            snapshot,
+          });
+        }
         return;
       }
 
@@ -657,8 +860,32 @@ export class OwlbearCoopClient {
         this.pendingJoin = null;
       }
       this.guestRoomCode = joinedRoom.code;
+      this.isGuestSpectator = false;
       this.startGuestKeepalive();
       this.callbacks.onRoomJoined(this.myId, joinedRoom);
+      return;
+    }
+
+    if (type === 'coop:spectate_offer' && msg.targetId === this.myId && msg.offer) {
+      const offer = msg.offer as SpectatorOffer;
+      if (this.pendingJoin && this.pendingJoin.code === offer.code) {
+        clearTimeout(this.pendingJoin.timer);
+        this.pendingJoin = null;
+      }
+      this.callbacks.onSpectateOffer(offer);
+      return;
+    }
+
+    if (type === 'coop:spectating' && msg.targetId === this.myId && msg.room) {
+      const joinedRoom = msg.room as RoomInfo;
+      if (this.pendingJoin && this.pendingJoin.code === joinedRoom.code) {
+        clearTimeout(this.pendingJoin.timer);
+        this.pendingJoin = null;
+      }
+      this.guestRoomCode = joinedRoom.code;
+      this.isGuestSpectator = true;
+      this.startGuestKeepalive();
+      this.callbacks.onSpectatingJoined(this.myId, joinedRoom);
       return;
     }
 
@@ -675,6 +902,7 @@ export class OwlbearCoopClient {
       this.callbacks.onInvite(null);
       if (this.guestRoomCode === msg.code) {
         this.guestRoomCode = null;
+        this.isGuestSpectator = false;
         this.stopGuestKeepalive();
         this.callbacks.onRoomLeft();
         this.callbacks.onError(
@@ -692,9 +920,11 @@ export class OwlbearCoopClient {
       const nextRoom = msg.room as RoomInfo;
       if (nextRoom.code !== this.guestRoomCode) return;
       this.lastHostSeenAt = Date.now();
-      const stillInRoom = nextRoom.members.some((m) => m.id === this.myId);
+      const stillInRoom =
+        this.isGuestSpectator || nextRoom.members.some((m) => m.id === this.myId);
       if (!stillInRoom) {
         this.guestRoomCode = null;
+        this.isGuestSpectator = false;
         this.stopGuestKeepalive();
         this.callbacks.onRoomLeft();
         this.callbacks.onError('Anda keluar dari room Owlbear.');

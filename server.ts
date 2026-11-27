@@ -35,6 +35,7 @@ interface RoomRecord {
   stage: StageLevel;
   hostId: string;
   members: LobbyMember[];
+  spectators: Set<string>;
   engine: ServerFarmEngine | null;
   tickTimer: ReturnType<typeof setInterval> | null;
   lastTickMs: number;
@@ -80,6 +81,7 @@ function toRoomInfo(room: RoomRecord): RoomInfo {
     maxPlayers: MAX_ROOM_PLAYERS,
     hostId: room.hostId,
     members: room.members.map((m) => ({ ...m })),
+    spectatorCount: room.spectators.size,
     targets: getOrderTargets(Math.max(2, room.members.length), room.stage),
   };
 }
@@ -88,6 +90,12 @@ function broadcastToRoom(room: RoomRecord, payload: unknown): void {
   const raw = JSON.stringify(payload);
   for (const m of room.members) {
     const client = clients.get(m.id);
+    if (client && client.ws.readyState === WebSocket.OPEN) {
+      client.ws.send(raw);
+    }
+  }
+  for (const spectatorId of room.spectators) {
+    const client = clients.get(spectatorId);
     if (client && client.ws.readyState === WebSocket.OPEN) {
       client.ws.send(raw);
     }
@@ -103,8 +111,8 @@ function stopRoomLoop(room: RoomRecord): void {
 
 function startRoomEngine(room: RoomRecord): void {
   stopRoomLoop(room);
-  room.phase = 'PLAYING';
   room.engine = new ServerFarmEngine(room.members, room.stage);
+  room.phase = room.engine.phase;
   room.lastTickMs = Date.now();
 
   broadcastToRoom(room, {
@@ -122,6 +130,7 @@ function startRoomEngine(room: RoomRecord): void {
     const dt = Math.min((now - room.lastTickMs) / 1000, 0.05);
     room.lastTickMs = now;
 
+    const prevEnginePhase = room.engine.phase;
     const fx = room.engine.step(dt);
     const snapshot = room.engine.getSnapshot();
 
@@ -137,13 +146,17 @@ function startRoomEngine(room: RoomRecord): void {
       snapshot,
     });
 
-    if (room.engine.phase !== 'PLAYING') {
+    if (room.engine.phase !== prevEnginePhase) {
       room.phase = room.engine.phase;
-      stopRoomLoop(room);
       broadcastToRoom(room, {
         type: 'room:update',
         room: toRoomInfo(room),
       });
+    }
+
+    if (room.engine.phase === 'VICTORY' || room.engine.phase === 'GAME_OVER') {
+      room.phase = room.engine.phase;
+      stopRoomLoop(room);
     }
   }, 40);
 }
@@ -153,6 +166,14 @@ function removeClientFromRoom(client: ConnectedClient): void {
   const room = rooms.get(client.roomCode);
   client.roomCode = null;
   if (!room) return;
+
+  if (room.spectators.delete(client.id)) {
+    broadcastToRoom(room, {
+      type: 'room:update',
+      room: toRoomInfo(room),
+    });
+    return;
+  }
 
   const idx = room.members.findIndex((m) => m.id === client.id);
   if (idx !== -1) {
@@ -165,6 +186,18 @@ function removeClientFromRoom(client: ConnectedClient): void {
 
   if (room.members.length === 0) {
     stopRoomLoop(room);
+    for (const spectatorId of room.spectators) {
+      const specClient = clients.get(spectatorId);
+      if (specClient) {
+        specClient.roomCode = null;
+        sendJson(specClient.ws, { type: 'room:left' });
+        sendJson(specClient.ws, {
+          type: 'room:error',
+          message: 'Semua pemain keluar, room ditutup.',
+        });
+      }
+    }
+    room.spectators.clear();
     rooms.delete(room.code);
     return;
   }
@@ -260,6 +293,7 @@ async function bootstrap() {
           stage: requestedStage,
           hostId: client.id,
           members: [hostMember],
+          spectators: new Set<string>(),
           engine: null,
           tickTimer: null,
           lastTickMs: Date.now(),
@@ -295,8 +329,13 @@ async function bootstrap() {
         }
         if (room.phase !== 'LOBBY') {
           sendJson(ws, {
-            type: 'room:error',
-            message: 'Permainan di room tersebut sudah dimulai.',
+            type: 'room:spectate_offer',
+            offer: {
+              code: room.code,
+              stage: room.stage,
+              playerCount: room.members.length,
+              maxPlayers: MAX_ROOM_PLAYERS,
+            },
           });
           return;
         }
@@ -335,6 +374,47 @@ async function bootstrap() {
         return;
       }
 
+      if (type === 'room:spectate') {
+        const rawCode =
+          typeof msg.code === 'string' ? msg.code.trim().toUpperCase() : '';
+        if (!rawCode) {
+          sendJson(ws, {
+            type: 'room:error',
+            message: 'Masukkan kode room terlebih dahulu.',
+          });
+          return;
+        }
+        const room = rooms.get(rawCode);
+        if (!room || room.members.length === 0) {
+          sendJson(ws, {
+            type: 'room:error',
+            message: `Room "${rawCode}" tidak ditemukan atau sudah ditutup.`,
+          });
+          return;
+        }
+
+        removeClientFromRoom(client);
+        room.spectators.add(client.id);
+        client.roomCode = room.code;
+
+        sendJson(ws, {
+          type: 'room:spectating',
+          playerId: client.id,
+          room: toRoomInfo(room),
+        });
+        if (room.engine) {
+          sendJson(ws, {
+            type: 'world:snapshot',
+            snapshot: room.engine.getSnapshot(),
+          });
+        }
+        broadcastToRoom(room, {
+          type: 'room:update',
+          room: toRoomInfo(room),
+        });
+        return;
+      }
+
       if (type === 'room:leave') {
         removeClientFromRoom(client);
         sendJson(ws, { type: 'room:left' });
@@ -344,6 +424,7 @@ async function bootstrap() {
       if (!client.roomCode) return;
       const room = rooms.get(client.roomCode);
       if (!room) return;
+      if (room.spectators.has(client.id)) return;
 
       if (type === 'room:ready') {
         if (room.phase !== 'LOBBY') return;
@@ -418,6 +499,51 @@ async function bootstrap() {
           type: 'room:update',
           room: toRoomInfo(room),
         });
+        return;
+      }
+
+      if (type === 'prep:select_rack' && room.phase === 'PREP' && room.engine) {
+        const rackId = typeof msg.rackId === 'string' ? msg.rackId : '';
+        if (room.engine.selectPrepRack(client.id, rackId)) {
+          broadcastToRoom(room, {
+            type: 'world:snapshot',
+            snapshot: room.engine.getSnapshot(),
+          });
+        }
+        return;
+      }
+
+      if (type === 'prep:roll' && room.phase === 'PREP' && room.engine) {
+        const modifier = typeof msg.modifier === 'number' ? msg.modifier : 0;
+        if (room.engine.rollPrepSkillCheck(client.id, modifier)) {
+          const fx = room.engine.step(0);
+          if (fx.length > 0) {
+            broadcastToRoom(room, {
+              type: 'world:fx',
+              events: fx,
+            });
+          }
+          broadcastToRoom(room, {
+            type: 'world:snapshot',
+            snapshot: room.engine.getSnapshot(),
+          });
+        }
+        return;
+      }
+
+      if (type === 'prep:start_round' && room.phase === 'PREP' && room.engine) {
+        if (room.hostId !== client.id) return;
+        if (room.engine.startRoundFromPrep()) {
+          room.phase = room.engine.phase;
+          broadcastToRoom(room, {
+            type: 'room:update',
+            room: toRoomInfo(room),
+          });
+          broadcastToRoom(room, {
+            type: 'world:snapshot',
+            snapshot: room.engine.getSnapshot(),
+          });
+        }
         return;
       }
 

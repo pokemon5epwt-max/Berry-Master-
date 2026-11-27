@@ -23,6 +23,58 @@ export const INTERACT_RANGE_PLOT = 76;
 export const INTERACT_RANGE_WELL = 84;
 export const INTERACT_RANGE_CRATE = 90;
 export const WHISTLE_REPEL_RANGE = 126;
+export const WHISTLE_COOLDOWN_SECONDS = 1.0;
+
+export const SKILL_CHECK_DC = 14;
+export const SKILL_CHECK_MIN_MOD = -5;
+export const SKILL_CHECK_MAX_MOD = 10;
+
+export const PAIL_BUFF_MAX_WATER = 8;
+export const BASKET_BUFF_MAX_CAPACITY = 5;
+export const BASKET_BUFF_SPEED_MULT = 1.14;
+export const RAKE_BUFF_RADIUS = 175;
+export const WHISTLE_BUFF_RANGE = 210;
+export const WHISTLE_BUFF_COOLDOWN_SECONDS = 0.65;
+
+export const TOOL_SKILL_CHECK_META: Record<
+  ToolType,
+  {
+    skillName: string;
+    abilityCode: string;
+    checkTitle: string;
+    buffName: string;
+    buffDesc: string;
+  }
+> = {
+  wailmer_pail: {
+    skillName: 'Nature',
+    abilityCode: 'Wis',
+    checkTitle: 'Resonansi Air & Tanah',
+    buffName: 'Ember Tak Surut',
+    buffDesc: 'Kapasitas air 8/8 & Siram Subur lebih kuat (+55%).',
+  },
+  harvest_basket: {
+    skillName: 'Sleight of Hand',
+    abilityCode: 'Dex',
+    checkTitle: 'Tangan Cekatan',
+    buffName: 'Keranjang Luas',
+    buffDesc: 'Muat 5 Berry sekaligus & gerak +14% lebih cepat.',
+  },
+  garden_rake: {
+    skillName: 'Athletics',
+    abilityCode: 'Str',
+    checkTitle: 'Tenaga Olah Lahan',
+    buffName: 'Sapuan Lebar',
+    buffDesc: 'Sekali ayun bersihkan seluruh gulma di sekitar.',
+  },
+  defender_whistle: {
+    skillName: 'Intimidation',
+    abilityCode: 'Cha',
+    checkTitle: 'Gema Wibawa',
+    buffName: 'Gema Penjaga',
+    buffDesc: 'Jangkauan luas, 2 damage sekali tiup & jeda 0.65d.',
+  },
+};
 
 export const WEATHER_META: Record<
   WeatherType,
@@ -39,7 +91,7 @@ export const WEATHER_META: Record<
   },
   rainy: {
     label: 'Hujan',
-    effectHint: 'Tanah lembap & sumur terisi',
+    effectHint: 'Sumur cepat penuh & bisa Siram Subur!',
     accentColor: '#2563EB',
   },
   heatwave: {
@@ -62,26 +114,26 @@ export const CRITTER_META: Record<
 > = {
   wurmple: {
     name: 'Wurmple',
-    speed: 62,
+    speed: 52,
     maxHp: 1,
-    vitalityDamage: 10,
-    eatCooldown: 2.1,
+    vitalityDamage: 6,
+    eatCooldown: 2.8,
     accentColor: '#E8364F',
   },
   zigzagoon: {
     name: 'Zigzagoon',
-    speed: 96,
+    speed: 78,
     maxHp: 2,
-    vitalityDamage: 14,
-    eatCooldown: 1.75,
+    vitalityDamage: 9,
+    eatCooldown: 2.3,
     accentColor: '#8B5A3C',
   },
   taillow: {
     name: 'Taillow',
-    speed: 132,
-    maxHp: 3,
-    vitalityDamage: 18,
-    eatCooldown: 1.35,
+    speed: 102,
+    maxHp: 2,
+    vitalityDamage: 12,
+    eatCooldown: 1.9,
     accentColor: '#2E4583',
   },
 };
@@ -109,7 +161,7 @@ export const STAGE_CONFIG: Record<
     description: 'Gelombang awal kebun.',
     pests: ['wurmple', 'zigzagoon'],
     targetMultiplier: 1.0,
-    spawnIntervalScale: 1.05,
+    spawnIntervalScale: 1.0,
     maxActiveBonus: 0,
     accentColor: '#2BA668',
   },
@@ -120,8 +172,8 @@ export const STAGE_CONFIG: Record<
     description: 'Tantangan kebun tingkat menengah.',
     pests: ['zigzagoon', 'taillow'],
     targetMultiplier: 1.75,
-    spawnIntervalScale: 0.84,
-    maxActiveBonus: 1,
+    spawnIntervalScale: 0.68,
+    maxActiveBonus: 2,
     accentColor: '#DF7E13',
   },
   3: {
@@ -131,8 +183,8 @@ export const STAGE_CONFIG: Record<
     description: 'Tantangan puncak kebun.',
     pests: ['wurmple', 'zigzagoon', 'taillow'],
     targetMultiplier: 2.5,
-    spawnIntervalScale: 0.68,
-    maxActiveBonus: 2,
+    spawnIntervalScale: 0.48,
+    maxActiveBonus: 4,
     accentColor: '#D94136',
   },
 };
@@ -165,7 +217,7 @@ export const TOOL_CONFIG: Record<
   wailmer_pail: {
     name: 'Wailmer Pail',
     shortName: 'Ember Siram',
-    roleHint: 'Siram pohon kering & isi di Sumur',
+    roleHint: 'Siram pohon kering atau Siram Subur saat hujan',
     accentColor: '#4895EF',
   },
   harvest_basket: {
@@ -183,7 +235,7 @@ export const TOOL_CONFIG: Record<
   defender_whistle: {
     name: 'Defender Whistle',
     shortName: 'Peluit Penjaga',
-    roleHint: 'Tiup untuk mengusir hama pengganggu di sekitar kebun',
+    roleHint: 'Tiup untuk mengusir hama (jeda 1 detik per tiupan)',
     accentColor: '#E76F51',
   },
 };
@@ -228,12 +280,12 @@ export function getOrderTargets(
   const mult = STAGE_CONFIG[stage]?.targetMultiplier ?? 1;
   const base =
     playerCount <= 1
-      ? { oran: 8, pecha: 6, sitrus: 4 }
+      ? { oran: 6, pecha: 4, sitrus: 3 }
       : playerCount >= 5
-        ? { oran: 24, pecha: 17, sitrus: 11 }
+        ? { oran: 18, pecha: 13, sitrus: 8 }
         : playerCount >= 3
-          ? { oran: 18, pecha: 13, sitrus: 8 }
-          : { oran: 14, pecha: 10, sitrus: 6 };
+          ? { oran: 14, pecha: 10, sitrus: 6 }
+          : { oran: 10, pecha: 7, sitrus: 4 };
 
   return {
     oran: Math.max(1, Math.round(base.oran * mult)),
@@ -249,7 +301,7 @@ export const WATER_WELL_POS = {
 };
 
 export const WELL_MAX_WATER = 12;
-export const WELL_INITIAL_WATER = 6;
+export const WELL_INITIAL_WATER = 8;
 export const WELL_PUMP_AMOUNT = 3;
 
 export const BERRY_MASTER_POS = {
@@ -268,6 +320,14 @@ export const PLOT_COLS_X = [496, 650, 804];
 export const PLOT_ROWS_Y = [268, 404, 540];
 export const PLOT_SIZE = 108;
 
+export const PLOT_COLS_X_4X4 = [456, 594, 732, 870];
+export const PLOT_ROWS_Y_4X4 = [224, 342, 460, 578];
+export const PLOT_SIZE_4X4 = 92;
+
+export function getPlotSize(plotCount: number): number {
+  return plotCount > 9 ? PLOT_SIZE_4X4 : PLOT_SIZE;
+}
+
 export const PLOT_BERRY_LAYOUT: BerryType[] = [
   'oran',
   'pecha',
@@ -276,6 +336,25 @@ export const PLOT_BERRY_LAYOUT: BerryType[] = [
   'oran',
   'pecha',
   'pecha',
+  'oran',
+  'sitrus',
+];
+
+export const PLOT_BERRY_LAYOUT_4X4: BerryType[] = [
+  'oran',
+  'pecha',
+  'sitrus',
+  'oran',
+  'pecha',
+  'oran',
+  'pecha',
+  'sitrus',
+  'sitrus',
+  'pecha',
+  'oran',
+  'pecha',
+  'oran',
+  'sitrus',
   'oran',
   'sitrus',
 ];
@@ -314,9 +393,9 @@ export const BERRY_META: Record<
 };
 
 export const STAGE_DURATIONS = {
-  seedling: 5.5,
-  sprout: 6.5,
-  flowering: 7.5,
+  seedling: 4.5,
+  sprout: 5.5,
+  flowering: 6.5,
 };
 
 export const SOLID_OBSTACLES = [

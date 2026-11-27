@@ -8,6 +8,7 @@ import {
   WATER_WELL_POS,
   WORLD_HEIGHT,
   WORLD_WIDTH,
+  getPlotSize,
 } from './constants.ts';
 import type { ClientWorldView } from './clientView.ts';
 import type {
@@ -93,11 +94,14 @@ export function renderClientWorld(
     ctx.translate((Math.random() - 0.5) * mag * 2, (Math.random() - 0.5) * mag * 2);
   }
 
+  const isExpandedGrid = snap.plots.length > 9;
+  const plotSize = getPlotSize(snap.plots.length);
+
   // 1. Detailed Pixel-Cozy Meadow Tiles & Wildflowers
   drawMeadowGround(ctx, t);
 
   // 2. Cobblestone Stepping Paths & Wooden Garden Fence
-  drawPathsAndFence(ctx, t);
+  drawPathsAndFence(ctx, t, isExpandedGrid);
 
   // 3. Detailed Gudang Kebun Berry & Tool Racks
   drawWarehouse(ctx, view, t);
@@ -108,9 +112,9 @@ export function renderClientWorld(
   // 5. Detailed Berry Master Stall & Peti Setoran
   drawBerryMasterAndCrate(ctx, view, t);
 
-  // 6. Raised Planter Soil Beds (3x3)
+  // 6. Raised Planter Soil Beds (3x3 or 4x4)
   for (const plot of snap.plots) {
-    drawPlotSoilBase(ctx, plot, t);
+    drawPlotSoilBase(ctx, plot, t, plotSize);
   }
 
   // 7. Depth-Sorted Entities (Berry Trees, Players, Wild Critters)
@@ -120,7 +124,7 @@ export function renderClientWorld(
   for (const plot of snap.plots) {
     drawables.push({
       y: plot.y + 8,
-      draw: () => drawPlotPlant(ctx, plot, t),
+      draw: () => drawPlotPlant(ctx, plot, t, plotSize),
     });
   }
 
@@ -145,7 +149,7 @@ export function renderClientWorld(
 
   // 8. Plot Status Badges (Water Drop, Weeds, Growth, Vitality)
   for (const plot of snap.plots) {
-    drawPlotStatusOverlay(ctx, plot, t);
+    drawPlotStatusOverlay(ctx, plot, t, plotSize);
   }
 
   // 9. Layered Forest Canopy Border
@@ -247,7 +251,11 @@ function drawFencePost(ctx: CanvasRenderingContext2D, x: number, y: number): voi
   ctx.fillRect(x - 2, y - 19, 4, 2);
 }
 
-function drawPathsAndFence(ctx: CanvasRenderingContext2D, t: number): void {
+function drawPathsAndFence(
+  ctx: CanvasRenderingContext2D,
+  t: number,
+  isExpandedGrid: boolean
+): void {
   ctx.save();
 
   // Interconnected pixel-art sandy dirt road network (outer turf-edge border + inner dirt fill)
@@ -258,8 +266,10 @@ function drawPathsAndFence(ctx: CanvasRenderingContext2D, t: number): void {
     { x: 246, y: 170, w: 112, h: 465, r: 18 },
     // Berry Master plaza & vertical connection to garden
     { x: 422, y: 138, w: 374, h: 96, r: 18 },
-    // Central 3x3 garden sandy courtyard surround
-    { x: 408, y: 204, w: 486, h: 416, r: 22 },
+    // Central garden sandy courtyard surround (3x3 or 4x4)
+    isExpandedGrid
+      ? { x: 392, y: 164, w: 542, h: 478, r: 22 }
+      : { x: 408, y: 204, w: 486, h: 416, r: 22 },
   ];
 
   ctx.fillStyle = '#754C2E';
@@ -1149,13 +1159,18 @@ function drawBerryMasterAndCrate(
 function drawPlotSoilBase(
   ctx: CanvasRenderingContext2D,
   plot: BerryPlotState,
-  t: number
+  t: number,
+  plotSize: number
 ): void {
   const half = PLOT_SIZE / 2;
+  const scale = plotSize / PLOT_SIZE;
   const shakeX = plot.shakeTimer > 0 ? Math.sin(t * 55) * 3 : 0;
 
   ctx.save();
   ctx.translate(plot.x + shakeX, plot.y);
+  if (scale !== 1) {
+    ctx.scale(scale, scale);
+  }
 
   // Drop shadow
   ctx.fillStyle = 'rgba(42, 28, 18, 0.22)';
@@ -1301,7 +1316,8 @@ function drawPlotSoilBase(
 function drawPlotPlant(
   ctx: CanvasRenderingContext2D,
   plot: BerryPlotState,
-  t: number
+  t: number,
+  plotSize: number
 ): void {
   const meta = BERRY_META[plot.berryType];
   const sway = Math.sin(t * 2.1 + plot.id) * 2.2;
@@ -1309,10 +1325,11 @@ function drawPlotPlant(
     plot.popTimer > 0
       ? 1 + Math.sin((plot.popTimer / 0.35) * Math.PI) * 0.2
       : 1;
+  const gridScale = plotSize < PLOT_SIZE ? 0.88 : 1;
 
   ctx.save();
   ctx.translate(plot.x, plot.y + 4);
-  ctx.scale(pop, pop);
+  ctx.scale(pop * gridScale, pop * gridScale);
 
   if (plot.stage === 'withered') {
     ctx.strokeStyle =
@@ -1718,12 +1735,18 @@ function drawBerryFruit(
 function drawPlotStatusOverlay(
   ctx: CanvasRenderingContext2D,
   plot: BerryPlotState,
-  t: number
+  t: number,
+  plotSize: number
 ): void {
   if (plot.stage === 'withered') return;
 
   ctx.save();
   const half = PLOT_SIZE / 2;
+  const scale = plotSize / PLOT_SIZE;
+  ctx.translate(plot.x, plot.y);
+  if (scale !== 1) {
+    ctx.scale(scale, scale);
+  }
 
   // Golden harvest rim glow when ripe and clean
   if (plot.stage === 'ripe' && !plot.hasWeeds) {
@@ -1732,8 +1755,8 @@ function drawPlotStatusOverlay(
     ctx.lineWidth = 3.5;
     roundRectPath(
       ctx,
-      plot.x - half - 2,
-      plot.y - half - 2,
+      -half - 2,
+      -half - 2,
       PLOT_SIZE + 4,
       PLOT_SIZE + 4,
       12
@@ -1744,8 +1767,8 @@ function drawPlotStatusOverlay(
   // Single compact water-droplet cue at top-right rim ONLY when thirsty (no heavy bobbing circles)
   if (plot.needsWater) {
     const bob = Math.sin(t * 4 + plot.id) * 2;
-    const bx = plot.x + half - 14;
-    const by = plot.y - half + 12 + bob;
+    const bx = half - 14;
+    const by = -half + 12 + bob;
 
     ctx.fillStyle = '#3B82F6';
     ctx.strokeStyle = '#FFFDF7';
@@ -1764,21 +1787,21 @@ function drawPlotStatusOverlay(
     const bw = 54;
     const ratio = plot.vitality / 100;
     ctx.fillStyle = 'rgba(45, 28, 18, 0.78)';
-    roundRectPath(ctx, plot.x - bw / 2, plot.y + 42, bw, 6, 3);
+    roundRectPath(ctx, -bw / 2, 42, bw, 6, 3);
     ctx.fill();
     ctx.fillStyle = ratio > 0.45 ? '#F59E0B' : '#EF4444';
-    roundRectPath(ctx, plot.x - bw / 2 + 1, plot.y + 43, Math.max(4, (bw - 2) * ratio), 4, 2);
+    roundRectPath(ctx, -bw / 2 + 1, 43, Math.max(4, (bw - 2) * ratio), 4, 2);
     ctx.fill();
   } else if (plot.stage !== 'ripe') {
     const bw = 50;
     ctx.fillStyle = 'rgba(45, 28, 18, 0.55)';
-    roundRectPath(ctx, plot.x - bw / 2, plot.y + 42, bw, 5, 2.5);
+    roundRectPath(ctx, -bw / 2, 42, bw, 5, 2.5);
     ctx.fill();
     ctx.fillStyle = '#6FD18E';
     roundRectPath(
       ctx,
-      plot.x - bw / 2 + 1,
-      plot.y + 43,
+      -bw / 2 + 1,
+      43,
       Math.max(4, (bw - 2) * plot.growthProgress),
       3,
       1.5

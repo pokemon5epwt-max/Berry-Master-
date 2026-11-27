@@ -4,8 +4,11 @@ import {
   Clock,
   CloudRain,
   Droplets,
+  Eye,
   Flame,
+  Gamepad2,
   Hand,
+  LogOut,
   Pause,
   Sun,
   Trees,
@@ -18,6 +21,7 @@ import {
   BERRY_META,
   STAGE_CONFIG,
   TOOL_CONFIG,
+  TOOL_SKILL_CHECK_META,
   WEATHER_META,
 } from '../game/constants.ts';
 import type { BerryType, InteractPrompt, WorldSnapshot } from '../game/types.ts';
@@ -30,9 +34,14 @@ interface GameHudProps {
   localPrompt?: InteractPrompt | null;
   muted: boolean;
   onToggleMute: () => void;
+  showMobileControls: boolean;
+  onToggleMobileControls: () => void;
   isSolo?: boolean;
+  isSpectator?: boolean;
+  spectatorCount?: number;
   onTogglePause?: () => void;
   onAction?: () => void;
+  onLeaveSpectate?: () => void;
   isOwlbearModal?: boolean;
   onCloseOwlbearModal?: () => void;
 }
@@ -51,9 +60,14 @@ export const GameHud: React.FC<GameHudProps> = ({
   localPrompt = null,
   muted,
   onToggleMute,
+  showMobileControls,
+  onToggleMobileControls,
   isSolo = false,
+  isSpectator = false,
+  spectatorCount = 0,
   onTogglePause,
   onAction,
+  onLeaveSpectate,
   isOwlbearModal = false,
   onCloseOwlbearModal,
 }) => {
@@ -63,11 +77,14 @@ export const GameHud: React.FC<GameHudProps> = ({
   const berryTypes: BerryType[] = ['oran', 'pecha', 'sitrus'];
   const weatherMeta = WEATHER_META[snapshot.weather];
 
-  const localPlayer =
-    snapshot.players.find((p) => p.id === localPlayerId) ??
-    snapshot.players[0] ??
-    null;
-  const teammates = snapshot.players.filter((p) => p.id !== localPlayer?.id);
+  const localPlayer = isSpectator
+    ? null
+    : snapshot.players.find((p) => p.id === localPlayerId) ??
+      snapshot.players[0] ??
+      null;
+  const teammates = isSpectator
+    ? snapshot.players
+    : snapshot.players.filter((p) => p.id !== localPlayer?.id);
 
   const localRack = localPlayer?.heldRackId
     ? snapshot.racks.find((r) => r.rackId === localPlayer.heldRackId) ?? null
@@ -201,16 +218,60 @@ export const GameHud: React.FC<GameHudProps> = ({
             </span>
           </div>
 
-          {isSolo && onTogglePause && (
+          {isSpectator && (
+            <div className="flex h-10 items-center gap-1.5 rounded-full border-[3px] border-[#4A2816] bg-[#E8F4FD] px-3 font-display text-xs font-bold text-[#1E3A5F] shadow-[0_4px_0_#4A2816] whitespace-nowrap">
+              <Eye className="h-4 w-4 text-[#2563EB]" />
+              <span>Penonton</span>
+            </div>
+          )}
+
+          {isSpectator && onLeaveSpectate && (
+            <button
+              type="button"
+              onClick={onLeaveSpectate}
+              aria-label="Keluar dari Mode Penonton"
+              className="flex h-10 items-center gap-1.5 rounded-full border-[3px] border-[#4A2816] bg-[#FFFDF5] px-3 font-display text-xs font-bold text-[#4A2816] shadow-[0_4px_0_#4A2816] transition-transform duration-150 hover:-translate-y-0.5 hover:bg-[#FFE4E2] active:translate-y-[3px] active:shadow-[0_1px_0_#4A2816] whitespace-nowrap"
+            >
+              <LogOut className="h-4 w-4" />
+              <span className="hidden sm:inline">Keluar</span>
+            </button>
+          )}
+
+          {isSolo && !isSpectator && onTogglePause && (
             <button
               type="button"
               onClick={onTogglePause}
               aria-label="Jeda Permainan"
               title="Jeda Permainan (Esc / P)"
-              className="flex h-10 items-center gap-1.5 rounded-full border-[3px] border-[#4A2816] bg-[#FCE07E] px-3.5 font-display text-xs font-bold text-[#3B2314] shadow-[0_4px_0_#4A2816] transition-transform duration-150 hover:-translate-y-0.5 hover:bg-[#FFD447] active:translate-y-[3px] active:shadow-[0_1px_0_#4A2816] focus-visible:outline-2 focus-visible:outline-[#E07A5F] whitespace-nowrap"
+              className="flex h-10 items-center gap-1.5 rounded-full border-[3px] border-[#4A2816] bg-[#FCE07E] px-3 sm:px-3.5 font-display text-xs font-bold text-[#3B2314] shadow-[0_4px_0_#4A2816] transition-transform duration-150 hover:-translate-y-0.5 hover:bg-[#FFD447] active:translate-y-[3px] active:shadow-[0_1px_0_#4A2816] focus-visible:outline-2 focus-visible:outline-[#E07A5F] whitespace-nowrap"
             >
               <Pause className="h-4 w-4" />
               <span className="hidden sm:inline">Jeda</span>
+            </button>
+          )}
+
+          {!isSpectator && (
+            <button
+              type="button"
+              onClick={onToggleMobileControls}
+              aria-label={
+                showMobileControls
+                  ? 'Sembunyikan Kontrol Sentuh'
+                  : 'Tampilkan Kontrol Sentuh'
+              }
+              aria-pressed={showMobileControls}
+              title={
+                showMobileControls
+                  ? 'Sembunyikan Kontrol Sentuh HP'
+                  : 'Tampilkan Kontrol Sentuh HP'
+              }
+              className={`flex h-10 w-10 items-center justify-center rounded-full border-[3px] border-[#4A2816] text-[#4A2816] shadow-[0_4px_0_#4A2816] transition-transform duration-150 hover:-translate-y-0.5 active:translate-y-[3px] active:shadow-[0_1px_0_#4A2816] focus-visible:outline-2 focus-visible:outline-[#E07A5F] ${
+                showMobileControls
+                  ? 'bg-[#FCE07E] hover:bg-[#FFD447]'
+                  : 'bg-[#FFFDF5] hover:bg-[#FFF3CC]'
+              }`}
+            >
+              <Gamepad2 className="h-4.5 w-4.5" />
             </button>
           )}
 
@@ -239,8 +300,74 @@ export const GameHud: React.FC<GameHudProps> = ({
         </div>
       </div>
 
-      {/* Bottom Bar: Informative Local Player Tool & Action Panel + Compact Teammate Cards */}
-      <div className="flex flex-wrap items-end justify-center gap-2.5">
+      {/* Compact Mobile Held-Tool Pill below Top HUD when Touch Controller is active */}
+      {!isSpectator && showMobileControls && localPlayer && (
+        <div className="mt-1.5 flex justify-center md:hidden">
+          <div className="flex items-center gap-2 rounded-full border-[2.5px] border-[#4A2816] bg-[#FFFDF5]/95 px-3 py-1 shadow-[0_3px_0_#4A2816]">
+            {localPlayer.heldTool && localRack ? (
+              <>
+                <ToolSvg tool={localPlayer.heldTool} size={18} />
+                <span className="text-[11px] font-extrabold text-[#3B2314]">
+                  {TOOL_CONFIG[localPlayer.heldTool].shortName}
+                </span>
+                {localPlayer.heldTool === 'wailmer_pail' && (
+                  <span
+                    className={`font-mono-tabular text-[11px] font-extrabold ${
+                      localRack.pailWater === 0 ? 'text-[#D64541]' : 'text-[#1E40AF]'
+                    }`}
+                  >
+                    · Air {localRack.pailWater}/{localRack.maxPailWater}
+                  </span>
+                )}
+                {localPlayer.heldTool === 'harvest_basket' && (
+                  <span className="font-mono-tabular text-[11px] font-extrabold text-[#B45309]">
+                    · {localRack.basketBerries.length}/{localRack.maxBasketCapacity}
+                  </span>
+                )}
+                {localPlayer.heldTool === 'defender_whistle' && (
+                  <span
+                    className={`font-mono-tabular text-[11px] font-extrabold ${
+                      localPlayer.whistleCooldown > 0
+                        ? 'text-[#D64541]'
+                        : 'text-[#C2410C]'
+                    }`}
+                  >
+                    {localPlayer.whistleCooldown > 0
+                      ? `· Jeda ${localPlayer.whistleCooldown.toFixed(1)}d`
+                      : '· Siap tiup'}
+                  </span>
+                )}
+                {localPlayer.buffedTool === localPlayer.heldTool && (
+                  <span className="text-[11px] font-extrabold text-[#1F7A4D]">
+                    · ★ {TOOL_SKILL_CHECK_META[localPlayer.heldTool].buffName}
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="text-[11px] font-bold text-[#6F553D]">
+                Tangan Kosong · Ambil alat di Gudang kiri
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Bottom Bar: Hidden on narrow mobile when Touch Controller occupies bottom corners */}
+      <div
+        className={`${
+          !isSpectator && showMobileControls ? 'hidden md:flex' : 'flex'
+        } flex-wrap items-end justify-center gap-2.5`}
+      >
+        {isSpectator && (
+          <div className="flex items-center gap-2 rounded-2xl border-[3px] border-[#4A2816] bg-[#E8F4FD]/95 px-3.5 py-2 shadow-[0_4px_0_#4A2816]">
+            <Eye className="h-4 w-4 text-[#2563EB]" />
+            <span className="text-xs font-extrabold text-[#1E3A5F]">
+              Mode Penonton
+              {spectatorCount > 1 ? ` · ${spectatorCount} Penonton` : ''}
+            </span>
+          </div>
+        )}
+
         {localPlayer && (
           <div className="pointer-events-auto flex flex-wrap items-center gap-2.5 sm:gap-3 rounded-2xl border-[3px] border-[#4A2816] bg-[#FFFDF5] px-3.5 py-2 shadow-[0_4px_0_#4A2816] ring-1 ring-inset ring-[#F3D88C]/80">
             {/* Local Player Identity */}
@@ -276,9 +403,19 @@ export const GameHud: React.FC<GameHudProps> = ({
                 </span>
 
                 <div className="flex flex-col leading-tight">
-                  <span className="text-xs font-extrabold text-[#3B2314]">
-                    {TOOL_CONFIG[localPlayer.heldTool].shortName}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-extrabold text-[#3B2314]">
+                      {TOOL_CONFIG[localPlayer.heldTool].shortName}
+                    </span>
+                    {localPlayer.buffedTool === localPlayer.heldTool && (
+                      <span
+                        className="text-[10.5px] font-extrabold text-[#1F7A4D]"
+                        title={TOOL_SKILL_CHECK_META[localPlayer.heldTool].buffDesc}
+                      >
+                        ★ {TOOL_SKILL_CHECK_META[localPlayer.heldTool].buffName}
+                      </span>
+                    )}
+                  </div>
 
                   {localPlayer.heldTool === 'wailmer_pail' && (
                     <div className="mt-0.5 flex items-center gap-2">
@@ -336,8 +473,16 @@ export const GameHud: React.FC<GameHudProps> = ({
                   )}
 
                   {localPlayer.heldTool === 'defender_whistle' && (
-                    <span className="text-[11px] font-semibold text-[#C2410C]">
-                      Usir hama di sekitar kebun
+                    <span
+                      className={`font-mono-tabular text-[11px] font-semibold ${
+                        localPlayer.whistleCooldown > 0
+                          ? 'text-[#D64541] font-extrabold'
+                          : 'text-[#C2410C]'
+                      }`}
+                    >
+                      {localPlayer.whistleCooldown > 0
+                        ? `Jeda ${localPlayer.whistleCooldown.toFixed(1)}d`
+                        : 'Siap tiup · Usir hama'}
                     </span>
                   )}
                 </div>
@@ -356,26 +501,37 @@ export const GameHud: React.FC<GameHudProps> = ({
               </div>
             )}
 
-            <span className="h-7 w-px bg-[#E2CCA5]" aria-hidden="true" />
+            {!showMobileControls && (
+              <>
+                <span className="h-7 w-px bg-[#E2CCA5]" aria-hidden="true" />
 
-            {/* Clear Interactive Action Button */}
-            <button
-              type="button"
-              onClick={onAction}
-              disabled={!onAction || snapshot.phase !== 'PLAYING'}
-              className={`flex items-center gap-1.5 rounded-full border-[2.5px] border-[#4A2816] px-3.5 py-1.5 font-display text-xs font-bold transition-transform duration-150 whitespace-nowrap ${
-                localPrompt
-                  ? 'bg-[#F59E0B] text-white shadow-[0_3px_0_#4A2816] hover:-translate-y-0.5 hover:bg-[#E08A00] active:translate-y-[2px] active:shadow-[0_1px_0_#4A2816]'
-                  : 'bg-[#FAF3DF] text-[#5C4433] shadow-[0_3px_0_#4A2816] hover:-translate-y-0.5 hover:bg-[#F3E5C2] active:translate-y-[2px] active:shadow-[0_1px_0_#4A2816]'
-              }`}
-              title="Tekan SPACE atau klik untuk melakukan aksi"
-            >
-              <Zap className="h-3.5 w-3.5" />
-              <span className="font-mono-tabular rounded bg-black/15 px-1.5 py-0.5 text-[10px] font-extrabold">
-                SPACE
-              </span>
-              <span>{localPrompt ? localPrompt.label : 'Aksi'}</span>
-            </button>
+                {/* Clear Interactive Action Button */}
+                <button
+                  type="button"
+                  onClick={onAction}
+                  disabled={!onAction || snapshot.phase !== 'PLAYING'}
+                  className={`flex items-center gap-1.5 rounded-full border-[2.5px] border-[#4A2816] px-3.5 py-1.5 font-display text-xs font-bold transition-transform duration-150 whitespace-nowrap ${
+                    localPrompt
+                      ? 'bg-[#F59E0B] text-white shadow-[0_3px_0_#4A2816] hover:-translate-y-0.5 hover:bg-[#E08A00] active:translate-y-[2px] active:shadow-[0_1px_0_#4A2816]'
+                      : 'bg-[#FAF3DF] text-[#5C4433] shadow-[0_3px_0_#4A2816] hover:-translate-y-0.5 hover:bg-[#F3E5C2] active:translate-y-[2px] active:shadow-[0_1px_0_#4A2816]'
+                  }`}
+                  title="Tekan SPACE atau klik untuk melakukan aksi"
+                >
+                  <Zap className="h-3.5 w-3.5" />
+                  <span className="font-mono-tabular rounded bg-black/15 px-1.5 py-0.5 text-[10px] font-extrabold">
+                    SPACE
+                  </span>
+                  <span>
+                    {localPrompt
+                      ? localPrompt.label
+                      : localPlayer.heldTool === 'defender_whistle' &&
+                          localPlayer.whistleCooldown > 0
+                        ? `Jeda ${localPlayer.whistleCooldown.toFixed(1)}d`
+                        : 'Aksi'}
+                  </span>
+                </button>
+              </>
+            )}
           </div>
         )}
 
@@ -401,6 +557,14 @@ export const GameHud: React.FC<GameHudProps> = ({
               {p.heldTool && rack ? (
                 <div className="flex items-center gap-1 border-l border-[#E2CCA5] pl-1.5">
                   <ToolSvg tool={p.heldTool} size={18} />
+                  {p.buffedTool === p.heldTool && (
+                    <span
+                      className="text-[11px] font-extrabold text-[#1F7A4D]"
+                      title={`Buff Aktif: ${TOOL_SKILL_CHECK_META[p.heldTool].buffName}`}
+                    >
+                      ★
+                    </span>
+                  )}
                   {p.heldTool === 'wailmer_pail' && (
                     <span className="font-mono-tabular text-[11px] font-bold text-[#1E40AF]">
                       {rack.pailWater}/{rack.maxPailWater}
