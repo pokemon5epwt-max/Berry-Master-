@@ -20,6 +20,7 @@ import {
   openOwlbearGameModal,
   type OwlbearRoomInvite,
 } from './game/owlbear.ts';
+import { OwlbearCoopClient } from './game/owlbearCoop.ts';
 import { renderClientWorld } from './game/renderer.ts';
 import { ServerFarmEngine } from './game/serverEngine.ts';
 import type {
@@ -65,6 +66,7 @@ export default function App() {
   const [obrInvite, setObrInvite] = useState<OwlbearRoomInvite | null>(null);
   const [obrBroadcastSent, setObrBroadcastSent] = useState<boolean>(false);
   const [wsOffline, setWsOffline] = useState<boolean>(false);
+  const [coopTransport, setCoopTransport] = useState<'ws' | 'owlbear' | 'none'>('none');
   const [hudSnapshot, setHudSnapshot] = useState<WorldSnapshot>(() =>
     viewRef.current!.snapshot
   );
@@ -76,6 +78,9 @@ export default function App() {
   const nameEditedRef = useRef<boolean>(false);
   const obrRoleRef = useRef<'GM' | 'PLAYER'>('PLAYER');
   obrRoleRef.current = obrRole;
+  const obrReadyRef = useRef<boolean>(false);
+  const activeCoopModeRef = useRef<'ws' | 'owlbear'>('ws');
+  const obrCoopRef = useRef<OwlbearCoopClient | null>(null);
   const pendingAutoJoinRef = useRef<string | null>(owlbearParams.autoJoinRoomCode);
   const obrBroadcastTimerRef = useRef<number | null>(null);
 
@@ -91,28 +96,131 @@ export default function App() {
     }
   }, []);
 
-  // Initialize Owlbear Rodeo SDK if embedded inside Owlbear
+  // Initialize Owlbear Rodeo SDK & Owlbear Co-op Client if embedded inside Owlbear
   useEffect(() => {
-    const cleanup = initOwlbearSdk({
-      onReady: ({ playerName: obrName, role }) => {
+    const coop = new OwlbearCoopClient({
+      onRoomJoined: (joinedId, nextRoom) => {
+        activeCoopModeRef.current = 'owlbear';
+        setCoopTransport('owlbear');
+        localPlayerIdRef.current = joinedId;
+        setPlayerId(joinedId);
+        setRoom(nextRoom);
+        setErrorMsg(null);
+        setScreenMode('ROOM_LOBBY');
+      },
+      onRoomUpdate: (nextRoom) => {
+        setRoom(nextRoom);
+        if (nextRoom.phase === 'LOBBY') {
+          soundManager.stopBgm();
+          viewRef.current?.resetToPreview();
+          setScreenMode('ROOM_LOBBY');
+        } else {
+          setScreenMode('IN_GAME');
+          if (nextRoom.phase === 'PLAYING') {
+            soundManager.startBgm();
+          } else {
+            soundManager.stopBgm();
+          }
+        }
+      },
+      onRoomLeft: () => {
+        soundManager.stopBgm();
+        setRoom(null);
+        viewRef.current?.resetToPreview();
+        localPlayerIdRef.current = coop.getPlayerId() ?? socketPlayerIdRef.current;
+        setPlayerId(localPlayerIdRef.current);
+        setScreenMode(
+          wsConnectedRef.current || obrReadyRef.current ? 'HOME_LOBBY' : 'CONNECTING'
+        );
+      },
+      onError: (message) => {
+        setErrorMsg(message);
+      },
+      onWorldSnapshot: (snap) => {
+        if (screenModeRef.current === 'SOLO_GAME') return;
+        viewRef.current?.applyServerSnapshot(snap);
+        setHudSnapshot(snap);
+      },
+      onWorldFx: (events) => {
+        if (screenModeRef.current === 'SOLO_GAME') return;
+        viewRef.current?.applyFxEvents(events);
+      },
+      onInvite: (invite) => {
+        setObrInvite(invite);
+      },
+    });
+    obrCoopRef.current = coop;
+
+    let fallbackTimer: number | null = null;
+
+    const activateOwlbearCoopIfNoWs = () => {
+      if (wsConnectedRef.current || !obrReadyRef.current) return;
+      activeCoopModeRef.current = 'owlbear';
+      setCoopTransport('owlbear');
+      const obrId = coop.getPlayerId();
+      if (screenModeRef.current !== 'SOLO_GAME' && obrId) {
+        localPlayerIdRef.current = obrId;
+        setPlayerId(obrId);
+        setScreenMode((prev) => (prev === 'CONNECTING' ? 'HOME_LOBBY' : prev));
+        const autoCode = pendingAutoJoinRef.current;
+        if (autoCode && owlbearParams.surfaceMode !== 'popover') {
+          pendingAutoJoinRef.current = null;
+          coop.joinRoom(autoCode, playerNameRef.current);
+        }
+      }
+    };
+
+    const cleanupSdk = initOwlbearSdk({
+      onReady: ({ playerName: obrName, role, connectionId }) => {
         setObrRole(role);
         obrRoleRef.current = role;
+        obrReadyRef.current = true;
+        coop.attach(connectionId, role);
+
         if (!nameEditedRef.current && obrName) {
           setPlayerName(obrName);
           playerNameRef.current = obrName;
+        }
+
+        if (!wsConnectedRef.current) {
+          const configuredWs = (
+            import.meta.env.VITE_WS_URL as string | undefined
+          )?.trim();
+          const staticHost =
+            !configuredWs &&
+            (window.location.hostname.endsWith('.vercel.app') ||
+              window.location.hostname.endsWith('.netlify.app') ||
+              window.location.hostname.endsWith('.pages.dev') ||
+              window.location.hostname.endsWith('.web.app'));
+
+          if (staticHost) {
+            activateOwlbearCoopIfNoWs();
+          } else {
+            fallbackTimer = window.setTimeout(activateOwlbearCoopIfNoWs, 800);
+          }
         }
       },
       onInvite: (invite) => {
         setObrInvite(invite);
       },
     });
+
+    const handleBeforeUnload = () => {
+      coop.dispose();
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
     return () => {
-      cleanup();
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      if (fallbackTimer !== null) clearTimeout(fallbackTimer);
+      cleanupSdk();
+      coop.dispose();
+      obrCoopRef.current = null;
       if (obrBroadcastTimerRef.current !== null) {
         clearTimeout(obrBroadcastTimerRef.current);
       }
     };
-  }, []);
+  }, [owlbearParams.surfaceMode]);
 
   // Connect WebSocket with automatic reconnect
   useEffect(() => {
@@ -129,14 +237,22 @@ export default function App() {
       const url = configuredWs
         ? configuredWs
         : `${proto}//${window.location.host}/ws`;
-      const isVercelWithoutWs =
-        !configuredWs && window.location.hostname.endsWith('.vercel.app');
+      const isStaticHostWithoutWs =
+        !configuredWs &&
+        (window.location.hostname.endsWith('.vercel.app') ||
+          window.location.hostname.endsWith('.netlify.app') ||
+          window.location.hostname.endsWith('.pages.dev') ||
+          window.location.hostname.endsWith('.web.app'));
 
       let ws: WebSocket;
       try {
         ws = new WebSocket(url);
       } catch {
         setWsOffline(true);
+        if (obrReadyRef.current) {
+          setCoopTransport('owlbear');
+          setScreenMode((prev) => (prev === 'CONNECTING' ? 'HOME_LOBBY' : prev));
+        }
         return;
       }
       wsRef.current = ws;
@@ -146,6 +262,10 @@ export default function App() {
         failedAttempts = 0;
         setWsOffline(false);
         setErrorMsg(null);
+        if (!obrCoopRef.current?.isInRoom()) {
+          activeCoopModeRef.current = 'ws';
+          setCoopTransport('ws');
+        }
       };
 
       ws.onmessage = (event) => {
@@ -250,12 +370,42 @@ export default function App() {
         wsConnectedRef.current = false;
         if (closedByUnmount) return;
         failedAttempts = wasConnected ? 1 : failedAttempts + 1;
-        if ((!wasConnected && failedAttempts >= 2) || (!wasConnected && isVercelWithoutWs)) {
+        if ((!wasConnected && failedAttempts >= 2) || (!wasConnected && isStaticHostWithoutWs)) {
           setWsOffline(true);
         }
+
+        if (obrCoopRef.current?.isInRoom()) {
+          // Stay safely inside active Owlbear Co-op room
+          return;
+        }
+
+        if (obrReadyRef.current && obrCoopRef.current?.isAttached()) {
+          activeCoopModeRef.current = 'owlbear';
+          setCoopTransport('owlbear');
+          if (screenModeRef.current !== 'SOLO_GAME') {
+            const obrId = obrCoopRef.current.getPlayerId();
+            if (obrId) {
+              localPlayerIdRef.current = obrId;
+              setPlayerId(obrId);
+            }
+            setScreenMode((prev) => (prev === 'CONNECTING' ? 'HOME_LOBBY' : prev));
+            const autoCode = pendingAutoJoinRef.current;
+            if (autoCode && owlbearParams.surfaceMode !== 'popover') {
+              pendingAutoJoinRef.current = null;
+              obrCoopRef.current.joinRoom(autoCode, playerNameRef.current);
+            }
+          }
+          // Retry WS infrequently in background only if not on static host
+          if (!isStaticHostWithoutWs) {
+            reconnectTimer = window.setTimeout(connect, 10000);
+          }
+          return;
+        }
+
         if (screenModeRef.current !== 'SOLO_GAME') {
           soundManager.stopBgm();
           setRoom(null);
+          setCoopTransport('none');
           setScreenMode('CONNECTING');
         }
         reconnectTimer = window.setTimeout(
@@ -347,31 +497,59 @@ export default function App() {
     heldKeysRef.current.clear();
     lastSentMoveRef.current = { x: 0, y: 0 };
 
-    localPlayerIdRef.current = socketPlayerIdRef.current;
-    setPlayerId(socketPlayerIdRef.current);
+    localPlayerIdRef.current =
+      socketPlayerIdRef.current ?? obrCoopRef.current?.getPlayerId() ?? null;
+    setPlayerId(localPlayerIdRef.current);
     viewRef.current?.resetToPreview();
     setHudSnapshot(viewRef.current!.snapshot);
-    setScreenMode(wsConnectedRef.current ? 'HOME_LOBBY' : 'CONNECTING');
+    setScreenMode(
+      wsConnectedRef.current || obrReadyRef.current ? 'HOME_LOBBY' : 'CONNECTING'
+    );
+  }, []);
+
+  const shouldUseOwlbearCoop = useCallback((): boolean => {
+    if (obrCoopRef.current?.isInRoom()) return true;
+    return Boolean(
+      !wsConnectedRef.current &&
+        obrReadyRef.current &&
+        obrCoopRef.current?.isAttached()
+    );
   }, []);
 
   const handleCreateRoom = useCallback(() => {
     soundManager.unlock();
     setErrorMsg(null);
+    if (shouldUseOwlbearCoop()) {
+      activeCoopModeRef.current = 'owlbear';
+      obrCoopRef.current?.createRoom(playerName);
+      return;
+    }
+    activeCoopModeRef.current = 'ws';
     sendSocket({ type: 'room:create', name: playerName });
-  }, [playerName, sendSocket]);
+  }, [playerName, sendSocket, shouldUseOwlbearCoop]);
 
   const handleJoinRoom = useCallback(
     (code: string) => {
       soundManager.unlock();
       setErrorMsg(null);
+      if (shouldUseOwlbearCoop()) {
+        activeCoopModeRef.current = 'owlbear';
+        obrCoopRef.current?.joinRoom(code, playerName);
+        return;
+      }
+      activeCoopModeRef.current = 'ws';
       sendSocket({ type: 'room:join', name: playerName, code });
     },
-    [playerName, sendSocket]
+    [playerName, sendSocket, shouldUseOwlbearCoop]
   );
 
   const handleToggleReady = useCallback(
     (nextReady: boolean) => {
       soundManager.unlock();
+      if (activeCoopModeRef.current === 'owlbear' || obrCoopRef.current?.isInRoom()) {
+        obrCoopRef.current?.setReady(nextReady);
+        return;
+      }
       sendSocket({ type: 'room:ready', isReady: nextReady });
     },
     [sendSocket]
@@ -381,6 +559,10 @@ export default function App() {
     soundManager.unlock();
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
+    }
+    if (activeCoopModeRef.current === 'owlbear' || obrCoopRef.current?.isInRoom()) {
+      obrCoopRef.current?.startGame();
+      return;
     }
     sendSocket({ type: 'room:start' });
   }, [sendSocket]);
@@ -394,6 +576,10 @@ export default function App() {
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
+    if (activeCoopModeRef.current === 'owlbear' || obrCoopRef.current?.isInRoom()) {
+      obrCoopRef.current?.restartGame();
+      return;
+    }
     sendSocket({ type: 'room:restart' });
   }, [handleStartSolo, sendSocket]);
 
@@ -402,16 +588,28 @@ export default function App() {
       handleReturnToMenuFromSolo();
       return;
     }
+    if (activeCoopModeRef.current === 'owlbear' || obrCoopRef.current?.isInRoom()) {
+      obrCoopRef.current?.returnToLobby();
+      return;
+    }
     sendSocket({ type: 'room:return_lobby' });
   }, [handleReturnToMenuFromSolo, sendSocket]);
 
   const handleLeaveRoom = useCallback(() => {
+    if (activeCoopModeRef.current === 'owlbear' || obrCoopRef.current?.isInRoom()) {
+      obrCoopRef.current?.leaveRoom();
+      return;
+    }
     sendSocket({ type: 'room:leave' });
   }, [sendSocket]);
 
   const handleBroadcastOwlbearInvite = useCallback(() => {
     if (!room || !isOwlbearAvailable()) return;
-    void broadcastOwlbearRoomInvite(room.code, playerNameRef.current, obrRoleRef.current);
+    if (obrCoopRef.current?.isHosting()) {
+      obrCoopRef.current.broadcastInvite();
+    } else {
+      void broadcastOwlbearRoomInvite(room.code, playerNameRef.current, obrRoleRef.current);
+    }
     setObrBroadcastSent(true);
     if (obrBroadcastTimerRef.current !== null) {
       clearTimeout(obrBroadcastTimerRef.current);
@@ -433,6 +631,8 @@ export default function App() {
     soundManager.unlock();
     if (mode === 'SOLO_GAME') {
       soloEngineRef.current?.handlePlayerAction(SOLO_PLAYER_ID);
+    } else if (activeCoopModeRef.current === 'owlbear' || obrCoopRef.current?.isInRoom()) {
+      obrCoopRef.current?.sendAction();
     } else {
       sendSocket({ type: 'player:action' });
     }
@@ -457,7 +657,11 @@ export default function App() {
         my !== lastSentMoveRef.current.y
       ) {
         lastSentMoveRef.current = { x: mx, y: my };
-        sendSocket({ type: 'player:input', moveX: mx, moveY: my });
+        if (activeCoopModeRef.current === 'owlbear' || obrCoopRef.current?.isInRoom()) {
+          obrCoopRef.current?.sendInput(mx, my);
+        } else {
+          sendSocket({ type: 'player:input', moveX: mx, moveY: my });
+        }
       }
     };
 
@@ -530,7 +734,11 @@ export default function App() {
         lastSentMoveRef.current.y !== 0
       ) {
         lastSentMoveRef.current = { x: 0, y: 0 };
-        sendSocket({ type: 'player:input', moveX: 0, moveY: 0 });
+        if (activeCoopModeRef.current === 'owlbear' || obrCoopRef.current?.isInRoom()) {
+          obrCoopRef.current?.sendInput(0, 0);
+        } else {
+          sendSocket({ type: 'player:input', moveX: 0, moveY: 0 });
+        }
       }
     };
 
@@ -637,6 +845,9 @@ export default function App() {
   const showOwlbearPopover =
     owlbearParams.surfaceMode === 'popover' && !popoverExpanded && !isPlayingView;
   const handleCloseModal = useCallback(() => {
+    if (obrCoopRef.current?.isInRoom()) {
+      obrCoopRef.current.leaveRoom();
+    }
     void closeOwlbearGameModal();
   }, []);
 
@@ -688,6 +899,7 @@ export default function App() {
           }
           obrBroadcastSent={obrBroadcastSent}
           wsOffline={wsOffline}
+          coopTransport={coopTransport}
         />
       )}
 

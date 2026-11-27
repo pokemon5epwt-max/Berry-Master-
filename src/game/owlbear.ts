@@ -37,7 +37,11 @@ export function isOwlbearAvailable(): boolean {
 }
 
 export function initOwlbearSdk(callbacks: {
-  onReady: (info: { playerName: string; role: 'GM' | 'PLAYER' }) => void;
+  onReady: (info: {
+    playerName: string;
+    role: 'GM' | 'PLAYER';
+    connectionId: string;
+  }) => void;
   onInvite: (invite: OwlbearRoomInvite | null) => void;
 }): () => void {
   if (!isOwlbearAvailable()) {
@@ -66,9 +70,12 @@ export function initOwlbearSdk(callbacks: {
     if (disposed) return;
 
     try {
-      const [playerName, role, meta] = await Promise.all([
+      const [playerName, role, connectionId, meta] = await Promise.all([
         OBR.player.getName().catch(() => 'Petani'),
         OBR.player.getRole().catch(() => 'PLAYER' as const),
+        OBR.player
+          .getConnectionId()
+          .catch(() => `obr_${Math.random().toString(36).slice(2, 10)}`),
         OBR.room.getMetadata().catch(() => ({} as Record<string, unknown>)),
       ]);
       if (disposed) return;
@@ -76,6 +83,7 @@ export function initOwlbearSdk(callbacks: {
       callbacks.onReady({
         playerName: playerName.trim().slice(0, 14) || 'Petani',
         role,
+        connectionId,
       });
 
       const existingInvite = parseInvite(meta[OWLBEAR_ROOM_META_KEY]);
@@ -173,6 +181,30 @@ export async function broadcastOwlbearRoomInvite(
       });
     } catch {
       // Ignore if GM metadata permission restricted
+    }
+  }
+}
+
+export async function clearOwlbearRoomInvite(
+  role: 'GM' | 'PLAYER'
+): Promise<void> {
+  if (!isOwlbearAvailable()) return;
+  try {
+    await OBR.broadcast.sendMessage(
+      OWLBEAR_BROADCAST_CHANNEL,
+      { clear: true },
+      { destination: 'ALL' }
+    );
+  } catch {
+    // Ignore broadcast failure
+  }
+  if (role === 'GM') {
+    try {
+      await OBR.room.setMetadata({
+        [OWLBEAR_ROOM_META_KEY]: undefined,
+      });
+    } catch {
+      // Ignore metadata clear failure
     }
   }
 }

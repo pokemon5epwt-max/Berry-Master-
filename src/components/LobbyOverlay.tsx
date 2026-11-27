@@ -56,6 +56,7 @@ interface LobbyOverlayProps {
   onBroadcastOwlbearInvite?: () => void;
   obrBroadcastSent?: boolean;
   wsOffline?: boolean;
+  coopTransport?: 'ws' | 'owlbear' | 'none';
 }
 
 const RpgCornerStuds: React.FC<{ size?: 'lg' | 'md' | 'sm' }> = ({
@@ -112,6 +113,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
   onBroadcastOwlbearInvite,
   obrBroadcastSent = false,
   wsOffline = false,
+  coopTransport = 'none',
 }) => {
   const [joinCode, setJoinCode] = useState('');
   const [copied, setCopied] = useState(false);
@@ -215,6 +217,13 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                   </div>
                 </div>
 
+                {coopTransport === 'owlbear' && (
+                  <div className="mt-2.5 inline-flex items-center gap-1.5 rounded-full border-2 border-[#2D6B4F] bg-[#E5F7EC] px-3.5 py-1 text-[11px] font-extrabold text-[#1E523A]">
+                    <span className="h-2 w-2 rounded-full bg-[#2BA668]" aria-hidden="true" />
+                    <span>Co-op aktif via Server Meja Owlbear Rodeo</span>
+                  </div>
+                )}
+
                 {obrInvite && (
                   <div className="mt-3 flex w-full max-w-[540px] flex-wrap items-center justify-between gap-2 rounded-xl border-[2.5px] border-[#4A2816] bg-[#FCE07E] px-3.5 py-2 shadow-[0_3px_0_#4A2816]">
                     <div className="text-xs font-bold text-[#3B2314]">
@@ -287,7 +296,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                       {isConnecting && (
                         <p className="mt-2 text-[11px] font-bold text-[#7F2921]">
                           {wsOffline
-                            ? 'Server Co-op offline — Vercel hanya mendukung Mode Solo. Untuk Co-op online, host server di Render/Railway/Fly.io.'
+                            ? 'Server WebSocket offline — pakai Mode Solo atau buka lewat Owlbear Rodeo untuk Co-op di meja.'
                             : 'Menghubungkan ke server online...'}
                         </p>
                       )}
@@ -524,9 +533,10 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
 
                 {/* 6 Trainer Slots */}
                 <div className="mt-4">
-                  <div className="flex items-center justify-between text-xs font-bold text-[#4B3824]">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-[#4B3824]">
                     <span className="tabular-nums">
                       Daftar Pemain ({room.members.length}/{room.maxPlayers})
+                      {coopTransport === 'owlbear' ? ' · Server Meja Owlbear' : ''}
                     </span>
                     <span>Kontrol: W A S D · SPACE</span>
                   </div>
