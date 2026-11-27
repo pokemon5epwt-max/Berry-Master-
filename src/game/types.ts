@@ -1,5 +1,7 @@
 export type RoomPhase = 'LOBBY' | 'PLAYING' | 'PAUSED' | 'VICTORY' | 'GAME_OVER';
 
+export type StageLevel = 1 | 2 | 3;
+
 export type ScreenMode =
   | 'CONNECTING'
   | 'HOME_LOBBY'
@@ -38,6 +40,7 @@ export interface LobbyMember {
 export interface RoomInfo {
   code: string;
   phase: RoomPhase;
+  stage: StageLevel;
   maxPlayers: number;
   hostId: string;
   members: LobbyMember[];
@@ -93,6 +96,7 @@ export interface BerryPlotState {
   berryType: BerryType;
   stage: GrowthStage;
   growthProgress: number;
+  ripeBerriesRemaining: number;
   waterLevel: number;
   needsWater: boolean;
   hasWeeds: boolean;
@@ -205,6 +209,7 @@ export interface FxEvent {
 
 export interface WorldSnapshot {
   phase: RoomPhase;
+  stage: StageLevel;
   timeRemaining: number;
   totalDuration: number;
   weather: WeatherType;

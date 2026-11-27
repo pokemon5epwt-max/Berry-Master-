@@ -1,7 +1,6 @@
 import {
   BERRY_MASTER_POS,
   BERRY_META,
-  CRITTER_META,
   DELIVERY_CRATE_POS,
   PLOT_SIZE,
   TOOL_CONFIG,
@@ -14,7 +13,6 @@ import type { ClientWorldView } from './clientView.ts';
 import type {
   BerryPlotState,
   BerryType,
-  CritterKind,
   Particle,
   PlayerState,
   ToolRackState,
@@ -150,12 +148,7 @@ export function renderClientWorld(
     drawPlotStatusOverlay(ctx, plot, t);
   }
 
-  // 9. Spawn Telegraphs
-  for (const tel of snap.telegraphs) {
-    drawTelegraph(ctx, tel.x, tel.y, tel.timer / tel.maxTimer, t, tel.kind);
-  }
-
-  // 10. Layered Forest Canopy Border
+  // 9. Layered Forest Canopy Border
   drawForestBorder(ctx, t);
 
   // 11. Ambient Butterflies (clear/heatwave only)
@@ -1322,7 +1315,12 @@ function drawPlotPlant(
   ctx.scale(pop, pop);
 
   if (plot.stage === 'withered') {
-    ctx.strokeStyle = '#735B49';
+    ctx.strokeStyle =
+      plot.berryType === 'pecha'
+        ? '#7D5852'
+        : plot.berryType === 'sitrus'
+          ? '#6E6340'
+          : '#6D5B4B';
     ctx.lineWidth = 3.5;
     ctx.lineCap = 'round';
     ctx.beginPath();
@@ -1330,6 +1328,10 @@ function drawPlotPlant(
     ctx.quadraticCurveTo(-4, -8, -14, -14);
     ctx.moveTo(0, -2);
     ctx.quadraticCurveTo(6, -12, 14, -10);
+    if (plot.berryType === 'sitrus') {
+      ctx.moveTo(0, -4);
+      ctx.lineTo(0, -18);
+    }
     ctx.stroke();
     ctx.restore();
     return;
@@ -1338,15 +1340,29 @@ function drawPlotPlant(
   const isDry = plot.needsWater || plot.waterLevel < 0.3;
 
   if (plot.stage === 'seedling') {
-    ctx.strokeStyle = isDry ? '#8D8E45' : '#4B8B4F';
+    const stemColor = isDry
+      ? '#8D8E45'
+      : plot.berryType === 'pecha'
+        ? '#4D8E62'
+        : plot.berryType === 'sitrus'
+          ? '#5E9938'
+          : '#3F865E';
+    const leafFill = isDry
+      ? '#C5C76C'
+      : plot.berryType === 'pecha'
+        ? '#A3DF9D'
+        : plot.berryType === 'sitrus'
+          ? '#AEE568'
+          : '#78D6A4';
+    ctx.strokeStyle = stemColor;
     ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.moveTo(0, 6);
-    ctx.lineTo(sway * 0.4, isDry ? -3 : -7);
+    ctx.lineTo(sway * 0.4, isDry ? -3 : -8);
     ctx.stroke();
 
-    ctx.fillStyle = isDry ? '#C5C76C' : '#8CD17D';
-    ctx.strokeStyle = isDry ? '#787A35' : '#4B8B4F';
+    ctx.fillStyle = leafFill;
+    ctx.strokeStyle = stemColor;
     ctx.lineWidth = 1.8;
     ctx.beginPath();
     ctx.ellipse(-7 + sway * 0.4, isDry ? -5 : -9, 7, 4, isDry ? -0.75 : -0.4, 0, Math.PI * 2);
@@ -1356,41 +1372,187 @@ function drawPlotPlant(
     ctx.ellipse(7 + sway * 0.4, isDry ? -5 : -9, 7, 4, isDry ? 0.75 : 0.4, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
-  } else if (plot.stage === 'sprout') {
-    ctx.fillStyle = '#6D4C3D';
+    ctx.restore();
+    return;
+  }
+
+  if (plot.stage === 'sprout') {
+    ctx.fillStyle = plot.berryType === 'pecha' ? '#7D5447' : '#6D4C3D';
     ctx.fillRect(-3, -6, 6, 14);
 
-    ctx.fillStyle = isDry ? '#A3AF54' : '#73C468';
-    ctx.strokeStyle = isDry ? '#6E7433' : '#3B7843';
-    ctx.lineWidth = 2;
+    if (plot.berryType === 'pecha') {
+      // Twin-puff sakura-tinted sapling
+      ctx.fillStyle = isDry ? '#B2B066' : '#7BC987';
+      ctx.strokeStyle = isDry ? '#787338' : '#3C7B4E';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(-9 + sway * 0.5, isDry ? -9 : -12, 12, 0, Math.PI * 2);
+      ctx.arc(9 + sway * 0.5, isDry ? -9 : -12, 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = isDry ? '#D9CE8B' : '#F8C4D8';
+      ctx.beginPath();
+      ctx.arc(sway * 0.5, isDry ? -16 : -19, 8, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (plot.berryType === 'sitrus') {
+      // Conical lime-green citrus sapling
+      ctx.fillStyle = isDry ? '#B0B84F' : '#7DD04E';
+      ctx.strokeStyle = isDry ? '#6E7433' : '#407A28';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(sway * 0.6, isDry ? -26 : -30);
+      ctx.lineTo(-15 + sway * 0.4, isDry ? -5 : -7);
+      ctx.lineTo(15 + sway * 0.4, isDry ? -5 : -7);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = isDry ? '#D8DE80' : '#B7EC72';
+      ctx.beginPath();
+      ctx.arc(sway * 0.5, isDry ? -16 : -19, 6, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      // Oran emerald round sapling
+      ctx.fillStyle = isDry ? '#A3AF54' : '#4FB87C';
+      ctx.strokeStyle = isDry ? '#6E7433' : '#2D724B';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(sway * 0.5, isDry ? -11 : -14, 15, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(-11 + sway * 0.5, -7, 9.5, 0, Math.PI * 2);
+      ctx.arc(11 + sway * 0.5, -7, 9.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = isDry ? '#CBD47D' : '#96E5B8';
+      ctx.beginPath();
+      ctx.arc(-3 + sway * 0.5, isDry ? -17 : -20, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.restore();
+    return;
+  }
+
+  // Full-grown tree (flowering / ripe): distinct silhouettes per berryType
+  ctx.fillStyle = 'rgba(42, 60, 32, 0.16)';
+  ctx.beginPath();
+  ctx.ellipse(0, 10, 26, 9, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  let fruitAnchors: Array<{ bx: number; by: number }>;
+  let blossomAnchors: Array<{ bx: number; by: number }>;
+
+  if (plot.berryType === 'pecha') {
+    // PECHA TREE: Warm Y-branched sakura-peach tree with wide rosy-emerald scalloped crown
+    ctx.strokeStyle = '#4B2E24';
+    ctx.fillStyle = '#875746';
+    ctx.lineWidth = 1.6;
     ctx.beginPath();
-    ctx.arc(sway * 0.5, isDry ? -11 : -14, 16, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(-11 + sway * 0.5, -7, 10, 0, Math.PI * 2);
-    ctx.arc(11 + sway * 0.5, -7, 10, 0, Math.PI * 2);
+    ctx.moveTo(-4.5, 10);
+    ctx.lineTo(-4, -3);
+    ctx.lineTo(-12, -13);
+    ctx.lineTo(-7, -15);
+    ctx.lineTo(0, -6);
+    ctx.lineTo(7, -15);
+    ctx.lineTo(12, -13);
+    ctx.lineTo(4, -3);
+    ctx.lineTo(4.5, 10);
+    ctx.closePath();
     ctx.fill();
     ctx.stroke();
 
-    ctx.fillStyle = isDry ? '#CBD47D' : '#A0E093';
-    ctx.fillRect(-4 + Math.round(sway * 0.5), isDry ? -20 : -23, 6, 4);
+    // Base emerald-jade leaf bed
+    ctx.fillStyle = isDry ? '#9EA655' : '#4FA36C';
+    ctx.strokeStyle = isDry ? '#666B33' : '#2D6340';
+    ctx.lineWidth = 2.1;
+    ctx.beginPath();
+    ctx.arc(-17 + sway * 0.5, isDry ? -10 : -12, 14, 0, Math.PI * 2);
+    ctx.arc(17 + sway * 0.5, isDry ? -10 : -12, 14, 0, Math.PI * 2);
+    ctx.arc(sway * 0.6, isDry ? -21 : -24, 18, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Signature sakura-pink blossom canopy puffs
+    ctx.fillStyle = isDry ? '#CBB97A' : '#F6B1CA';
+    ctx.strokeStyle = isDry ? '#7E703E' : '#B55B7E';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.arc(-11 + sway * 0.55, isDry ? -16 : -19, 11, 0, Math.PI * 2);
+    ctx.arc(11 + sway * 0.55, isDry ? -16 : -19, 11, 0, Math.PI * 2);
+    ctx.arc(sway * 0.6, isDry ? -25 : -29, 13, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = isDry ? '#E4D8A3' : '#FADBE8';
+    ctx.beginPath();
+    ctx.arc(-3 + sway * 0.6, isDry ? -27 : -31, 6.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    blossomAnchors = [
+      { bx: -14, by: -13 },
+      { bx: 14, by: -13 },
+      { bx: 0, by: -28 },
+    ];
+    fruitAnchors = [
+      { bx: 0, by: -20 },
+      { bx: -14, by: -10 },
+      { bx: 14, by: -10 },
+    ];
+  } else if (plot.berryType === 'sitrus') {
+    // SITRUS TREE: Taller two-tier tapered lime-gold citrus tree
+    ctx.fillStyle = '#735334';
+    ctx.strokeStyle = '#47311C';
+    ctx.lineWidth = 1.6;
+    ctx.fillRect(-4, -9, 8, 19);
+    ctx.strokeRect(-4, -9, 8, 19);
+
+    // Lower wide citrus tier
+    ctx.fillStyle = isDry ? '#9DA944' : '#58A63E';
+    ctx.strokeStyle = isDry ? '#626A28' : '#326622';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.ellipse(sway * 0.45, isDry ? -11 : -13, 25, 13, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Upper narrower crown tier
+    ctx.fillStyle = isDry ? '#B8C152' : '#7BC748';
+    ctx.beginPath();
+    ctx.ellipse(sway * 0.6, isDry ? -24 : -28, 17, 13, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Sunlit lime-gold crest tuft
+    ctx.fillStyle = isDry ? '#D7DB7A' : '#B5EC62';
+    ctx.beginPath();
+    ctx.arc(-3 + sway * 0.65, isDry ? -30 : -34, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = isDry ? '#EAEBA4' : '#E2F695';
+    ctx.beginPath();
+    ctx.arc(-4 + sway * 0.65, isDry ? -33 : -37, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    blossomAnchors = [
+      { bx: -15, by: -12 },
+      { bx: 15, by: -12 },
+      { bx: 0, by: -30 },
+    ];
+    fruitAnchors = [
+      { bx: 0, by: -27 },
+      { bx: -14, by: -11 },
+      { bx: 14, by: -11 },
+    ];
   } else {
-    ctx.fillStyle = 'rgba(42, 60, 32, 0.16)';
-    ctx.beginPath();
-    ctx.ellipse(0, 10, 25, 9, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Detailed tree trunk with bark shade
+    // ORAN TREE: Sturdy cool-emerald berry bush tree with rounded triple-puff crown
     ctx.fillStyle = '#7C583B';
     ctx.strokeStyle = '#4A3321';
     ctx.lineWidth = 1.6;
     ctx.fillRect(-4.5, -6, 9, 16);
     ctx.strokeRect(-4.5, -6, 9, 16);
 
-    // Multi-layered lush Pokopia canopy (warm olive when parched, bright emerald when healthy)
-    ctx.fillStyle = isDry ? '#97A84F' : '#53A65D';
-    ctx.strokeStyle = isDry ? '#626C31' : '#326639';
+    ctx.fillStyle = isDry ? '#97A84F' : '#3E9A6E';
+    ctx.strokeStyle = isDry ? '#626C31' : '#245F43';
     ctx.lineWidth = 2.2;
     ctx.beginPath();
     ctx.arc(-15 + sway * 0.5, isDry ? -8 : -10, 15, 0, Math.PI * 2);
@@ -1399,53 +1561,100 @@ function drawPlotPlant(
     ctx.fill();
     ctx.stroke();
 
-    // Sunny leaf highlight puffs
-    ctx.fillStyle = isDry ? '#BDC86D' : '#7DD183';
+    ctx.fillStyle = isDry ? '#BDC86D' : '#6AD199';
     ctx.beginPath();
     ctx.arc(sway * 0.6 - 4, isDry ? -23 : -26, 13, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = isDry ? '#D9DF94' : '#A4E8A6';
+    ctx.fillStyle = isDry ? '#D9DF94' : '#9CECC0';
     ctx.beginPath();
     ctx.arc(sway * 0.6 - 6, isDry ? -27 : -30, 6, 0, Math.PI * 2);
     ctx.fill();
 
-    if (plot.stage === 'flowering') {
-      const blossoms = [
-        { bx: -12, by: -14 },
-        { bx: 11, by: -12 },
-        { bx: 0, by: -29 },
-      ];
-      for (const bl of blossoms) {
+    blossomAnchors = [
+      { bx: -12, by: -14 },
+      { bx: 11, by: -12 },
+      { bx: 0, by: -29 },
+    ];
+    fruitAnchors = [
+      { bx: 0, by: -24 },
+      { bx: -13, by: -10 },
+      { bx: 13, by: -9 },
+    ];
+  }
+
+  if (plot.stage === 'flowering') {
+    for (const bl of blossomAnchors) {
+      const fx = bl.bx + sway * 0.5;
+      const fy = bl.by;
+      if (plot.berryType === 'pecha') {
+        // 5-petal sakura blossom
+        ctx.fillStyle = '#FFF5FA';
+        for (let p = 0; p < 5; p++) {
+          const ang = (p * Math.PI * 2) / 5;
+          ctx.beginPath();
+          ctx.arc(fx + Math.cos(ang) * 3.1, fy + Math.sin(ang) * 3.1, 2.4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.fillStyle = meta.color;
+        ctx.beginPath();
+        ctx.arc(fx, fy, 2.1, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (plot.berryType === 'sitrus') {
+        // Golden star citrus blossom
+        ctx.fillStyle = '#FFFBEB';
+        for (let p = 0; p < 4; p++) {
+          const ang = (p * Math.PI) / 2 + 0.4;
+          ctx.beginPath();
+          ctx.ellipse(
+            fx + Math.cos(ang) * 3,
+            fy + Math.sin(ang) * 3,
+            3.2,
+            1.9,
+            ang,
+            0,
+            Math.PI * 2
+          );
+          ctx.fill();
+        }
+        ctx.fillStyle = '#F59E0B';
+        ctx.beginPath();
+        ctx.arc(fx, fy, 2.2, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        // Oran white-and-blue berry blossom
         ctx.fillStyle = '#FFFDF5';
         ctx.beginPath();
-        ctx.arc(bl.bx + sway * 0.5, bl.by, 4.8, 0, Math.PI * 2);
+        ctx.arc(fx, fy, 4.8, 0, Math.PI * 2);
         ctx.fill();
         ctx.fillStyle = meta.color;
         ctx.beginPath();
-        ctx.arc(bl.bx + sway * 0.5, bl.by, 2.2, 0, Math.PI * 2);
+        ctx.arc(fx, fy, 2.2, 0, Math.PI * 2);
         ctx.fill();
       }
-    } else if (plot.stage === 'ripe') {
-      const berries = [
-        { bx: -13, by: -10 },
-        { bx: 13, by: -9 },
-        { bx: 0, by: -26 },
-      ];
-      for (const b of berries) {
-        drawBerryFruit(ctx, plot.berryType, b.bx + sway * 0.5, b.by, 1.15);
-      }
+    }
+  } else if (plot.stage === 'ripe') {
+    const fruitCount = Math.max(1, Math.min(3, plot.ripeBerriesRemaining || 1));
+    const displayFruits =
+      fruitCount === 1
+        ? [fruitAnchors[0]]
+        : fruitCount === 2
+          ? [fruitAnchors[1], fruitAnchors[2]]
+          : [fruitAnchors[1], fruitAnchors[2], fruitAnchors[0]];
 
-      // Gentle golden harvest sparkles when ripe and clean
-      if (!plot.hasWeeds) {
-        const twinkle = 0.65 + Math.sin(t * 5 + plot.id) * 0.35;
-        ctx.fillStyle = `rgba(255, 243, 140, ${twinkle})`;
-        for (const [sx, sy] of [
-          [-20, -28],
-          [21, -22],
-        ]) {
-          ctx.fillRect(sx - 1, sy - 4, 2, 8);
-          ctx.fillRect(sx - 4, sy - 1, 8, 2);
-        }
+    for (const b of displayFruits) {
+      drawBerryFruit(ctx, plot.berryType, b.bx + sway * 0.5, b.by, 1.15);
+    }
+
+    // Gentle golden harvest sparkles when ripe and clean
+    if (!plot.hasWeeds) {
+      const twinkle = 0.65 + Math.sin(t * 5 + plot.id) * 0.35;
+      ctx.fillStyle = `rgba(255, 243, 140, ${twinkle})`;
+      for (const [sx, sy] of [
+        [-20, -28],
+        [21, -22],
+      ]) {
+        ctx.fillRect(sx - 1, sy - 4, 2, 8);
+        ctx.fillRect(sx - 4, sy - 1, 8, 2);
       }
     }
   }
@@ -2108,47 +2317,6 @@ function drawCritter(
       ctx.stroke();
     }
   }
-}
-
-function drawTelegraph(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  ratio: number,
-  t: number,
-  kind: CritterKind
-): void {
-  const pulse = 1 + Math.sin(t * 14) * 0.14;
-  const accent = CRITTER_META[kind].accentColor;
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.scale(pulse, pulse);
-
-  ctx.fillStyle =
-    kind === 'taillow'
-      ? 'rgba(46, 69, 131, 0.34)'
-      : kind === 'zigzagoon'
-        ? 'rgba(139, 90, 60, 0.3)'
-        : 'rgba(232, 54, 79, 0.28)';
-  ctx.beginPath();
-  ctx.arc(0, 0, (kind === 'taillow' ? 25 : 22) * (1 - ratio * 0.3), 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.fillStyle = accent;
-  ctx.strokeStyle = '#FFFDF7';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(0, 0, 12, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.fillStyle = '#FFFFFF';
-  ctx.font = '800 14px "Outfit", sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(kind === 'taillow' ? '!!' : '!', 0, 1);
-
-  ctx.restore();
 }
 
 function drawForestBorder(ctx: CanvasRenderingContext2D, t: number): void {

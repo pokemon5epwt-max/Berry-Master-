@@ -17,6 +17,7 @@ import type {
   LobbyMember,
   RoomInfo,
   RoomPhase,
+  StageLevel,
   WorldSnapshot,
 } from './types.ts';
 
@@ -31,6 +32,7 @@ const HOST_STALE_MS = 22000;
 interface HostRoomRecord {
   code: string;
   phase: RoomPhase;
+  stage: StageLevel;
   hostId: string;
   members: LobbyMember[];
 }
@@ -130,7 +132,7 @@ export class OwlbearCoopClient {
     }
   }
 
-  public createRoom(rawName: string): void {
+  public createRoom(rawName: string, stage: StageLevel = 1): void {
     if (!this.myId) {
       this.callbacks.onError('Koneksi meja Owlbear belum siap.');
       return;
@@ -154,6 +156,7 @@ export class OwlbearCoopClient {
     this.hostRoom = {
       code,
       phase: 'LOBBY',
+      stage,
       hostId: this.myId,
       members: [hostMember],
     };
@@ -219,8 +222,22 @@ export class OwlbearCoopClient {
     this.startHostEngine();
   }
 
+  public setStage(stage: StageLevel): void {
+    if (!this.hostRoom || this.hostRoom.phase !== 'LOBBY') return;
+    this.hostRoom.stage = stage;
+    const roomInfo = this.toHostRoomInfo();
+    this.sendRemote({ type: 'coop:room_update', room: roomInfo });
+    this.callbacks.onRoomUpdate(roomInfo);
+  }
+
   public restartGame(): void {
     if (!this.hostRoom) return;
+    this.startHostEngine();
+  }
+
+  public nextStage(): void {
+    if (!this.hostRoom || this.hostRoom.phase !== 'VICTORY') return;
+    this.hostRoom.stage = Math.min(3, this.hostRoom.stage + 1) as StageLevel;
     this.startHostEngine();
   }
 
@@ -301,10 +318,11 @@ export class OwlbearCoopClient {
     return {
       code: room.code,
       phase: room.phase,
+      stage: room.stage,
       maxPlayers: MAX_ROOM_PLAYERS,
       hostId: room.hostId,
       members: room.members.map((m) => ({ ...m })),
-      targets: getOrderTargets(Math.max(2, room.members.length)),
+      targets: getOrderTargets(Math.max(2, room.members.length), room.stage),
     };
   }
 
@@ -369,7 +387,10 @@ export class OwlbearCoopClient {
     this.stopHostEngineLoop();
 
     this.hostRoom.phase = 'PLAYING';
-    this.hostEngine = new ServerFarmEngine(this.hostRoom.members);
+    this.hostEngine = new ServerFarmEngine(
+      this.hostRoom.members,
+      this.hostRoom.stage
+    );
     this.hostTickCount = 0;
 
     const roomInfo = this.toHostRoomInfo();

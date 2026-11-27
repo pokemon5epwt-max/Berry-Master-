@@ -28,6 +28,7 @@ import type {
   LobbyMember,
   RoomInfo,
   ScreenMode,
+  StageLevel,
   WorldSnapshot,
 } from './game/types.ts';
 
@@ -67,10 +68,13 @@ export default function App() {
   const [obrBroadcastSent, setObrBroadcastSent] = useState<boolean>(false);
   const [wsOffline, setWsOffline] = useState<boolean>(false);
   const [coopTransport, setCoopTransport] = useState<'ws' | 'owlbear' | 'none'>('none');
+  const [selectedStage, setSelectedStage] = useState<StageLevel>(1);
   const [hudSnapshot, setHudSnapshot] = useState<WorldSnapshot>(() =>
     viewRef.current!.snapshot
   );
 
+  const selectedStageRef = useRef<StageLevel>(1);
+  selectedStageRef.current = selectedStage;
   const screenModeRef = useRef<ScreenMode>('CONNECTING');
   screenModeRef.current = screenMode;
   const playerNameRef = useRef<string>(playerName);
@@ -105,11 +109,13 @@ export default function App() {
         localPlayerIdRef.current = joinedId;
         setPlayerId(joinedId);
         setRoom(nextRoom);
+        if (nextRoom.stage) setSelectedStage(nextRoom.stage);
         setErrorMsg(null);
         setScreenMode('ROOM_LOBBY');
       },
       onRoomUpdate: (nextRoom) => {
         setRoom(nextRoom);
+        if (nextRoom.stage) setSelectedStage(nextRoom.stage);
         if (nextRoom.phase === 'LOBBY') {
           soundManager.stopBgm();
           viewRef.current?.resetToPreview();
@@ -308,6 +314,7 @@ export default function App() {
           localPlayerIdRef.current = joinedId;
           setPlayerId(joinedId);
           setRoom(nextRoom);
+          if (nextRoom.stage) setSelectedStage(nextRoom.stage);
           setErrorMsg(null);
           setScreenMode('ROOM_LOBBY');
           if (nextRoom.hostId === joinedId && isOwlbearAvailable()) {
@@ -323,6 +330,7 @@ export default function App() {
         if (type === 'room:update') {
           const nextRoom = msg.room as RoomInfo;
           setRoom(nextRoom);
+          if (nextRoom.stage) setSelectedStage(nextRoom.stage);
           if (nextRoom.phase === 'LOBBY') {
             soundManager.stopBgm();
             viewRef.current?.resetToPreview();
@@ -439,38 +447,42 @@ export default function App() {
     }
   }, []);
 
-  const handleStartSolo = useCallback(() => {
-    soundManager.unlock();
-    if (document.activeElement instanceof HTMLElement) {
-      document.activeElement.blur();
-    }
-    heldKeysRef.current.clear();
-    lastSentMoveRef.current = { x: 0, y: 0 };
+  const handleStartSolo = useCallback(
+    (stageOverride?: StageLevel) => {
+      soundManager.unlock();
+      if (document.activeElement instanceof HTMLElement) {
+        document.activeElement.blur();
+      }
+      heldKeysRef.current.clear();
+      lastSentMoveRef.current = { x: 0, y: 0 };
 
-    const palette = PLAYER_PALETTES[0];
-    const soloMember: LobbyMember = {
-      id: SOLO_PLAYER_ID,
-      name: sanitizeSoloName(playerName),
-      slotIndex: 0,
-      capColor: palette.capColor,
-      scarfColor: palette.scarfColor,
-      isHost: true,
-      isReady: true,
-    };
+      const stageToPlay = stageOverride ?? selectedStageRef.current;
+      const palette = PLAYER_PALETTES[0];
+      const soloMember: LobbyMember = {
+        id: SOLO_PLAYER_ID,
+        name: sanitizeSoloName(playerName),
+        slotIndex: 0,
+        capColor: palette.capColor,
+        scarfColor: palette.scarfColor,
+        isHost: true,
+        isReady: true,
+      };
 
-    const engine = new ServerFarmEngine([soloMember]);
-    soloEngineRef.current = engine;
-    localPlayerIdRef.current = SOLO_PLAYER_ID;
-    setPlayerId(SOLO_PLAYER_ID);
-    setErrorMsg(null);
+      const engine = new ServerFarmEngine([soloMember], stageToPlay);
+      soloEngineRef.current = engine;
+      localPlayerIdRef.current = SOLO_PLAYER_ID;
+      setPlayerId(SOLO_PLAYER_ID);
+      setErrorMsg(null);
 
-    viewRef.current?.resetToPreview();
-    const initialSnap = engine.getSnapshot();
-    viewRef.current?.applyServerSnapshot(initialSnap);
-    setHudSnapshot(initialSnap);
-    setScreenMode('SOLO_GAME');
-    soundManager.startBgm();
-  }, [playerName]);
+      viewRef.current?.resetToPreview();
+      const initialSnap = engine.getSnapshot();
+      viewRef.current?.applyServerSnapshot(initialSnap);
+      setHudSnapshot(initialSnap);
+      setScreenMode('SOLO_GAME');
+      soundManager.startBgm();
+    },
+    [playerName]
+  );
 
   const handleToggleSoloPause = useCallback(() => {
     const engine = soloEngineRef.current;
@@ -521,12 +533,33 @@ export default function App() {
     setErrorMsg(null);
     if (shouldUseOwlbearCoop()) {
       activeCoopModeRef.current = 'owlbear';
-      obrCoopRef.current?.createRoom(playerName);
+      obrCoopRef.current?.createRoom(playerName, selectedStageRef.current);
       return;
     }
     activeCoopModeRef.current = 'ws';
-    sendSocket({ type: 'room:create', name: playerName });
+    sendSocket({
+      type: 'room:create',
+      name: playerName,
+      stage: selectedStageRef.current,
+    });
   }, [playerName, sendSocket, shouldUseOwlbearCoop]);
+
+  const handleSelectStage = useCallback(
+    (stage: StageLevel) => {
+      setSelectedStage(stage);
+      if (screenModeRef.current === 'ROOM_LOBBY') {
+        if (
+          activeCoopModeRef.current === 'owlbear' ||
+          obrCoopRef.current?.isInRoom()
+        ) {
+          obrCoopRef.current?.setStage(stage);
+          return;
+        }
+        sendSocket({ type: 'room:set_stage', stage });
+      }
+    },
+    [sendSocket]
+  );
 
   const handleJoinRoom = useCallback(
     (code: string) => {
@@ -569,7 +602,8 @@ export default function App() {
 
   const handleRestart = useCallback(() => {
     if (screenModeRef.current === 'SOLO_GAME') {
-      handleStartSolo();
+      const activeStage = soloEngineRef.current?.stage ?? selectedStageRef.current;
+      handleStartSolo(activeStage);
       return;
     }
     soundManager.unlock();
@@ -581,6 +615,25 @@ export default function App() {
       return;
     }
     sendSocket({ type: 'room:restart' });
+  }, [handleStartSolo, sendSocket]);
+
+  const handleNextStage = useCallback(() => {
+    if (screenModeRef.current === 'SOLO_GAME') {
+      const currentStage = soloEngineRef.current?.stage ?? selectedStageRef.current;
+      const nextStage = Math.min(3, currentStage + 1) as StageLevel;
+      setSelectedStage(nextStage);
+      handleStartSolo(nextStage);
+      return;
+    }
+    soundManager.unlock();
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    if (activeCoopModeRef.current === 'owlbear' || obrCoopRef.current?.isInRoom()) {
+      obrCoopRef.current?.nextStage();
+      return;
+    }
+    sendSocket({ type: 'room:next_stage' });
   }, [handleStartSolo, sendSocket]);
 
   const handleReturnLobby = useCallback(() => {
@@ -882,10 +935,12 @@ export default function App() {
           playerName={playerName}
           onChangeName={handleChangeName}
           room={room}
+          selectedStage={selectedStage}
+          onSelectStage={handleSelectStage}
           errorMsg={errorMsg}
           muted={muted}
           onToggleMute={handleToggleMute}
-          onStartSolo={handleStartSolo}
+          onStartSolo={() => handleStartSolo()}
           onCreateRoom={handleCreateRoom}
           onJoinRoom={handleJoinRoom}
           onToggleReady={handleToggleReady}
@@ -926,6 +981,7 @@ export default function App() {
           isSolo={isSolo}
           onResume={handleToggleSoloPause}
           onRestart={handleRestart}
+          onNextStage={handleNextStage}
           onReturnLobby={handleReturnLobby}
           onLeaveRoom={handleLeaveRoom}
         />

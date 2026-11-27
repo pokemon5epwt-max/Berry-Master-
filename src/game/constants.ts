@@ -2,6 +2,7 @@ import type {
   BerryType,
   CritterKind,
   OrderCounts,
+  StageLevel,
   ToolType,
   WeatherType,
 } from './types.ts';
@@ -85,6 +86,57 @@ export const CRITTER_META: Record<
   },
 };
 
+export const STAGE_ORDER: StageLevel[] = [1, 2, 3];
+
+export const STAGE_CONFIG: Record<
+  StageLevel,
+  {
+    label: string;
+    title: string;
+    pestSummary: string;
+    description: string;
+    pests: CritterKind[];
+    targetMultiplier: number;
+    spawnIntervalScale: number;
+    maxActiveBonus: number;
+    accentColor: string;
+  }
+> = {
+  1: {
+    label: 'Stage 1',
+    title: 'Kebun Awal',
+    pestSummary: 'Wurmple & Zigzagoon',
+    description: 'Gelombang awal kebun.',
+    pests: ['wurmple', 'zigzagoon'],
+    targetMultiplier: 1.0,
+    spawnIntervalScale: 1.05,
+    maxActiveBonus: 0,
+    accentColor: '#2BA668',
+  },
+  2: {
+    label: 'Stage 2',
+    title: 'Kebun Ramai',
+    pestSummary: 'Zigzagoon & Taillow',
+    description: 'Tantangan kebun tingkat menengah.',
+    pests: ['zigzagoon', 'taillow'],
+    targetMultiplier: 1.75,
+    spawnIntervalScale: 0.84,
+    maxActiveBonus: 1,
+    accentColor: '#DF7E13',
+  },
+  3: {
+    label: 'Stage 3',
+    title: 'Puncak Panen',
+    pestSummary: 'Semua Hama Datang',
+    description: 'Tantangan puncak kebun.',
+    pests: ['wurmple', 'zigzagoon', 'taillow'],
+    targetMultiplier: 2.5,
+    spawnIntervalScale: 0.68,
+    maxActiveBonus: 2,
+    accentColor: '#D94136',
+  },
+};
+
 export const WAREHOUSE_BOUNDS = {
   x: 36,
   y: 112,
@@ -131,7 +183,7 @@ export const TOOL_CONFIG: Record<
   defender_whistle: {
     name: 'Defender Whistle',
     shortName: 'Peluit Penjaga',
-    roleHint: 'Tiup untuk mengusir hama (Wurmple/Zigzagoon/Taillow)',
+    roleHint: 'Tiup untuk mengusir hama pengganggu di sekitar kebun',
     accentColor: '#E76F51',
   },
 };
@@ -169,17 +221,25 @@ export function getRackDefinitions(playerCount: number): RackDefinition[] {
   ];
 }
 
-export function getOrderTargets(playerCount: number): OrderCounts {
-  if (playerCount <= 1) {
-    return { oran: 7, pecha: 5, sitrus: 3 };
-  }
-  if (playerCount >= 5) {
-    return { oran: 20, pecha: 14, sitrus: 9 };
-  }
-  if (playerCount >= 3) {
-    return { oran: 16, pecha: 11, sitrus: 7 };
-  }
-  return { oran: 12, pecha: 8, sitrus: 5 };
+export function getOrderTargets(
+  playerCount: number,
+  stage: StageLevel = 1
+): OrderCounts {
+  const mult = STAGE_CONFIG[stage]?.targetMultiplier ?? 1;
+  const base =
+    playerCount <= 1
+      ? { oran: 8, pecha: 6, sitrus: 4 }
+      : playerCount >= 5
+        ? { oran: 24, pecha: 17, sitrus: 11 }
+        : playerCount >= 3
+          ? { oran: 18, pecha: 13, sitrus: 8 }
+          : { oran: 14, pecha: 10, sitrus: 6 };
+
+  return {
+    oran: Math.max(1, Math.round(base.oran * mult)),
+    pecha: Math.max(1, Math.round(base.pecha * mult)),
+    sitrus: Math.max(1, Math.round(base.sitrus * mult)),
+  };
 }
 
 export const WATER_WELL_POS = {

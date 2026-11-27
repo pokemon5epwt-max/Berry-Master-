@@ -16,11 +16,14 @@ import {
 } from 'lucide-react';
 import {
   MIN_ROOM_PLAYERS_TO_START,
+  STAGE_CONFIG,
+  STAGE_ORDER,
   TOOL_CONFIG,
   TOOL_ORDER,
+  getOrderTargets,
 } from '../game/constants.ts';
 import type { OwlbearRoomInvite } from '../game/owlbear.ts';
-import type { RoomInfo, ScreenMode } from '../game/types.ts';
+import type { RoomInfo, ScreenMode, StageLevel } from '../game/types.ts';
 import {
   BerrySvg,
   MiniBerryLeafIcon,
@@ -41,6 +44,8 @@ interface LobbyOverlayProps {
   playerName: string;
   onChangeName: (name: string) => void;
   room: RoomInfo | null;
+  selectedStage: StageLevel;
+  onSelectStage: (stage: StageLevel) => void;
   errorMsg: string | null;
   muted: boolean;
   onToggleMute: () => void;
@@ -98,6 +103,8 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
   playerName,
   onChangeName,
   room,
+  selectedStage,
+  onSelectStage,
   errorMsg,
   muted,
   onToggleMute,
@@ -135,6 +142,8 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
     allGuestsReady;
   const isConnecting = screenMode === 'CONNECTING';
   const isHomeView = screenMode === 'HOME_LOBBY' || isConnecting;
+  const soloTargets = getOrderTargets(1, selectedStage);
+  const activeRoomStage = room?.stage ?? selectedStage;
 
   return (
     <div className="cozy-pokopia-backdrop fixed inset-0 z-30 flex items-center justify-center p-2.5 sm:p-4 overflow-y-auto">
@@ -251,8 +260,46 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                   </div>
                 )}
 
+                {/* Stage 1-3 Selector (Nama Stage saja tanpa daftar hama) */}
+                <div className="mt-3 w-full rounded-[14px] border-[2.5px] border-[#4A2816] bg-[#FAF3DF] px-3 py-2.5 shadow-[inset_0_0_0_1.5px_#E6C25A]">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs font-extrabold uppercase tracking-wider text-[#5A3B22]">
+                      Pilih Tingkat Kesulitan
+                    </span>
+                    <span className="text-[11px] font-bold text-[#6F553D]">
+                      Panen acak <strong className="text-[#3B2314]">1–3 Berry</strong> / pohon · Keranjang maks 3
+                    </span>
+                  </div>
+                  <div className="mt-2 grid grid-cols-3 gap-2">
+                    {STAGE_ORDER.map((stageNum) => {
+                      const cfg = STAGE_CONFIG[stageNum];
+                      const active = selectedStage === stageNum;
+                      return (
+                        <button
+                          key={stageNum}
+                          type="button"
+                          onClick={() => onSelectStage(stageNum)}
+                          aria-pressed={active}
+                          className={`flex items-center justify-center rounded-xl border-[2.5px] px-3 py-2 font-display text-sm font-bold transition-transform duration-150 whitespace-nowrap ${
+                            active
+                              ? 'border-[#4A2816] text-white shadow-[0_3px_0_#4A2816] -translate-y-0.5'
+                              : 'border-[#C9A36B] bg-[#FFFDF6]/85 text-[#4A2816] hover:border-[#4A2816] hover:bg-[#FFF9EA]'
+                          }`}
+                          style={
+                            active
+                              ? { backgroundColor: cfg.accentColor }
+                              : undefined
+                          }
+                        >
+                          {cfg.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 {/* 3 Handheld Mode Cards with Gold Corner Brackets */}
-                <div className="mt-4 grid w-full grid-cols-1 gap-3.5 md:grid-cols-3">
+                <div className="mt-3.5 grid w-full grid-cols-1 gap-3.5 md:grid-cols-3">
                   {/* Card 1: Mode Solo */}
                   <div className="rpg-card-shell relative flex flex-col justify-between rounded-[14px] bg-[#FCE07E] p-4">
                     <RpgCornerStuds size="md" />
@@ -266,7 +313,12 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                         Mode Solo (1 Pemain)
                       </h2>
                       <p className="mt-1.5 text-xs font-semibold leading-relaxed text-[#4C321D]">
-                        Main langsung tanpa perlu room! Target pesanan disesuaikan untuk 1 petani (7 Oran, 5 Pecha, 3 Sitrus) dengan tombol Jeda (Esc/P).
+                        Main langsung di{' '}
+                        <strong className="text-[#2B1B10]">
+                          {STAGE_CONFIG[selectedStage].label}
+                        </strong>
+                        ! Target: {soloTargets.oran} Oran, {soloTargets.pecha}{' '}
+                        Pecha, {soloTargets.sitrus} Sitrus (Jeda Esc/P).
                       </p>
                     </div>
                     <button
@@ -522,7 +574,7 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                   </div>
                 </div>
 
-                {errorMsg && (
+                  {errorMsg && (
                   <div
                     role="alert"
                     className="mt-3 rounded-xl border-[2.5px] border-[#992B25] bg-[#FFE4E2] px-4 py-2 text-center text-xs font-bold text-[#8E221D]"
@@ -530,6 +582,52 @@ export const LobbyOverlay: React.FC<LobbyOverlayProps> = ({
                     {errorMsg}
                   </div>
                 )}
+
+                {/* Room Stage Selector (Host interactive, Guest read-only; nama Stage saja) */}
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2.5 rounded-[14px] border-[2.5px] border-[#4A2816] bg-[#FAF3DF] px-4 py-2.5 shadow-[inset_0_0_0_1.5px_#E6C25A]">
+                  <span className="text-xs font-extrabold uppercase tracking-wider text-[#5A3B22]">
+                    Tingkat Kesulitan
+                  </span>
+
+                  {isHost ? (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {STAGE_ORDER.map((stageNum) => {
+                        const cfg = STAGE_CONFIG[stageNum];
+                        const active = activeRoomStage === stageNum;
+                        return (
+                          <button
+                            key={stageNum}
+                            type="button"
+                            onClick={() => onSelectStage(stageNum)}
+                            aria-pressed={active}
+                            className={`rounded-full border-2 px-3 py-1 font-display text-xs font-bold transition-transform duration-150 whitespace-nowrap ${
+                              active
+                                ? 'border-[#4A2816] text-white shadow-[0_2px_0_#4A2816]'
+                                : 'border-[#C9A36B] bg-[#FFFDF6] text-[#4A2816] hover:border-[#4A2816]'
+                            }`}
+                            style={
+                              active
+                                ? { backgroundColor: cfg.accentColor }
+                                : undefined
+                            }
+                          >
+                            {cfg.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <span
+                      className="rounded-full border-2 border-[#4A2816] px-3 py-1 font-display text-xs font-bold text-white whitespace-nowrap"
+                      style={{
+                        backgroundColor:
+                          STAGE_CONFIG[activeRoomStage].accentColor,
+                      }}
+                    >
+                      {STAGE_CONFIG[activeRoomStage].label} (Dipilih Host)
+                    </span>
+                  )}
+                </div>
 
                 {/* 6 Trainer Slots */}
                 <div className="mt-4">

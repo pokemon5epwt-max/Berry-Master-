@@ -10,7 +10,12 @@ import {
   getOrderTargets,
 } from './src/game/constants.ts';
 import { ServerFarmEngine } from './src/game/serverEngine.ts';
-import type { LobbyMember, RoomInfo, RoomPhase } from './src/game/types.ts';
+import type {
+  LobbyMember,
+  RoomInfo,
+  RoomPhase,
+  StageLevel,
+} from './src/game/types.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -27,6 +32,7 @@ interface ConnectedClient {
 interface RoomRecord {
   code: string;
   phase: RoomPhase;
+  stage: StageLevel;
   hostId: string;
   members: LobbyMember[];
   engine: ServerFarmEngine | null;
@@ -70,10 +76,11 @@ function toRoomInfo(room: RoomRecord): RoomInfo {
   return {
     code: room.code,
     phase: room.phase,
+    stage: room.stage,
     maxPlayers: MAX_ROOM_PLAYERS,
     hostId: room.hostId,
     members: room.members.map((m) => ({ ...m })),
-    targets: getOrderTargets(Math.max(2, room.members.length)),
+    targets: getOrderTargets(Math.max(2, room.members.length), room.stage),
   };
 }
 
@@ -97,7 +104,7 @@ function stopRoomLoop(room: RoomRecord): void {
 function startRoomEngine(room: RoomRecord): void {
   stopRoomLoop(room);
   room.phase = 'PLAYING';
-  room.engine = new ServerFarmEngine(room.members);
+  room.engine = new ServerFarmEngine(room.members, room.stage);
   room.lastTickMs = Date.now();
 
   broadcastToRoom(room, {
@@ -245,9 +252,12 @@ async function bootstrap() {
           isHost: true,
           isReady: true,
         };
+        const requestedStage =
+          msg.stage === 1 || msg.stage === 2 || msg.stage === 3 ? msg.stage : 1;
         const room: RoomRecord = {
           code,
           phase: 'LOBBY',
+          stage: requestedStage,
           hostId: client.id,
           members: [hostMember],
           engine: null,
@@ -370,9 +380,28 @@ async function bootstrap() {
         return;
       }
 
+      if (type === 'room:set_stage') {
+        if (room.hostId !== client.id || room.phase !== 'LOBBY') return;
+        const nextStage = msg.stage;
+        if (nextStage !== 1 && nextStage !== 2 && nextStage !== 3) return;
+        room.stage = nextStage;
+        broadcastToRoom(room, {
+          type: 'room:update',
+          room: toRoomInfo(room),
+        });
+        return;
+      }
+
       if (type === 'room:restart') {
         if (room.hostId !== client.id) return;
         if (room.phase !== 'VICTORY' && room.phase !== 'GAME_OVER') return;
+        startRoomEngine(room);
+        return;
+      }
+
+      if (type === 'room:next_stage') {
+        if (room.hostId !== client.id || room.phase !== 'VICTORY') return;
+        room.stage = Math.min(3, room.stage + 1) as StageLevel;
         startRoomEngine(room);
         return;
       }

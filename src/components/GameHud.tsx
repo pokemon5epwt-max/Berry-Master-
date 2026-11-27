@@ -14,7 +14,12 @@ import {
   X,
   Zap,
 } from 'lucide-react';
-import { BERRY_META, TOOL_CONFIG, WEATHER_META } from '../game/constants.ts';
+import {
+  BERRY_META,
+  STAGE_CONFIG,
+  TOOL_CONFIG,
+  WEATHER_META,
+} from '../game/constants.ts';
 import type { BerryType, InteractPrompt, WorldSnapshot } from '../game/types.ts';
 import { BerrySvg, ToolSvg } from './BerryIcons.tsx';
 
@@ -72,8 +77,21 @@ export const GameHud: React.FC<GameHudProps> = ({
     <div className="pointer-events-none fixed inset-0 z-20 flex flex-col justify-between p-2.5 sm:p-3.5">
       {/* Top HUD: Consistent Warm Rounded Cards */}
       <div className="flex flex-wrap items-start justify-between gap-2.5">
-        {/* Left Card: Timer, Garden Health, Well Water & Weather */}
+        {/* Left Card: Stage, Timer, Garden Health, Well Water & Weather */}
         <div className="flex items-center gap-2.5 sm:gap-3.5 rounded-2xl border-[3px] border-[#4A2816] bg-[#FFFDF5] px-3.5 py-2 shadow-[0_4px_0_#4A2816] ring-1 ring-inset ring-[#F3D88C]/60">
+          <div
+            className="rounded-lg border-[2px] border-[#4A2816] px-2 py-0.5 font-display text-xs font-bold text-white whitespace-nowrap"
+            style={{
+              backgroundColor:
+                STAGE_CONFIG[snapshot.stage]?.accentColor ?? '#2BA668',
+            }}
+            title={STAGE_CONFIG[snapshot.stage]?.label ?? `Stage ${snapshot.stage}`}
+          >
+            {STAGE_CONFIG[snapshot.stage]?.label ?? `Stage ${snapshot.stage}`}
+          </div>
+
+          <span className="h-4 w-px bg-[#E2CCA5]" aria-hidden="true" />
+
           <div className="flex items-center gap-1.5">
             <Clock
               className={`h-4.5 w-4.5 ${isUrgent ? 'text-[#D64541]' : 'text-[#7C583B]'}`}

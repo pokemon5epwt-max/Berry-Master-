@@ -1,6 +1,6 @@
 import React from 'react';
-import { Home, LogOut, Play, RotateCcw, Users } from 'lucide-react';
-import { BERRY_META } from '../game/constants.ts';
+import { ArrowRight, Home, LogOut, Play, RotateCcw, Users } from 'lucide-react';
+import { BERRY_META, STAGE_CONFIG } from '../game/constants.ts';
 import type { BerryType, WorldSnapshot } from '../game/types.ts';
 import {
   BerrySvg,
@@ -14,6 +14,7 @@ interface EndModalProps {
   isSolo?: boolean;
   onResume?: () => void;
   onRestart: () => void;
+  onNextStage?: () => void;
   onReturnLobby: () => void;
   onLeaveRoom: () => void;
 }
@@ -24,6 +25,7 @@ export const EndModal: React.FC<EndModalProps> = ({
   isSolo = false,
   onResume,
   onRestart,
+  onNextStage,
   onReturnLobby,
   onLeaveRoom,
 }) => {
@@ -37,6 +39,8 @@ export const EndModal: React.FC<EndModalProps> = ({
 
   const isPaused = snapshot.phase === 'PAUSED';
   const isVictory = snapshot.phase === 'VICTORY';
+  const canAdvanceStage = isVictory && snapshot.stage < 3 && Boolean(onNextStage);
+  const stageMeta = STAGE_CONFIG[snapshot.stage];
   const elapsed = Math.max(
     0,
     Math.round(snapshot.totalDuration - snapshot.timeRemaining)
@@ -54,6 +58,15 @@ export const EndModal: React.FC<EndModalProps> = ({
         </div>
         <div className="pointer-events-none absolute right-4 top-4">
           <MiniSparkleStarIcon size={20} />
+        </div>
+
+        <div
+          className="mb-1.5 inline-flex items-center gap-1.5 rounded-full border-2 border-[#4A2816] px-3 py-0.5 font-display text-xs font-bold text-white"
+          style={{ backgroundColor: stageMeta.accentColor }}
+        >
+          <span>{stageMeta.label}</span>
+          <span>·</span>
+          <span>{stageMeta.title}</span>
         </div>
 
         <h2
@@ -142,6 +155,17 @@ export const EndModal: React.FC<EndModalProps> = ({
               </button>
             )}
 
+            {canAdvanceStage && (
+              <button
+                type="button"
+                onClick={onNextStage}
+                className="flex items-center gap-2 rounded-full border-[3px] border-[#4A2816] bg-[#2EB872] px-5 py-2.5 font-display text-base font-bold text-white shadow-[0_4px_0_#4A2816] ring-1 ring-inset ring-white/35 transition-transform duration-150 hover:-translate-y-0.5 hover:bg-[#23A362] active:translate-y-[3px] active:shadow-[0_1px_0_#4A2816] whitespace-nowrap"
+              >
+                <span>Lanjut Stage {snapshot.stage + 1}</span>
+                <ArrowRight className="h-4 w-4" />
+              </button>
+            )}
+
             <button
               type="button"
               onClick={onRestart}
@@ -162,6 +186,17 @@ export const EndModal: React.FC<EndModalProps> = ({
           </div>
         ) : isHost ? (
           <div className="mt-6 flex w-full flex-wrap items-center justify-center gap-3">
+            {canAdvanceStage && (
+              <button
+                type="button"
+                onClick={onNextStage}
+                className="flex items-center gap-2 rounded-full border-[3px] border-[#4A2816] bg-[#2EB872] px-5 py-2.5 font-display text-base font-bold text-white shadow-[0_4px_0_#4A2816] ring-1 ring-inset ring-white/35 transition-transform duration-150 hover:-translate-y-0.5 hover:bg-[#23A362] active:translate-y-[3px] active:shadow-[0_1px_0_#4A2816] whitespace-nowrap"
+              >
+                <span>Lanjut Stage {snapshot.stage + 1}</span>
+                <ArrowRight className="h-4 w-4" />
+              </button>
+            )}
+
             <button
               type="button"
               onClick={onReturnLobby}

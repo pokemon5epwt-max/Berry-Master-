@@ -13,6 +13,7 @@ import {
   PLOT_COLS_X,
   PLOT_ROWS_Y,
   SOLID_OBSTACLES,
+  STAGE_CONFIG,
   STAGE_DURATIONS,
   TOOL_CONFIG,
   WATER_WELL_POS,
@@ -39,6 +40,7 @@ import type {
   PlayerState,
   RoomPhase,
   SpawnTelegraph,
+  StageLevel,
   ToolRackState,
   WeatherType,
   WildPokemonState,
@@ -65,6 +67,7 @@ interface InternalCritter extends WildPokemonState {
 
 export class ServerFarmEngine {
   public phase: RoomPhase = 'PLAYING';
+  public stage: StageLevel;
   public timeRemaining: number = DAY_DURATION_SECONDS;
   public totalDuration: number = DAY_DURATION_SECONDS;
   public elapsedPlayTime = 0;
@@ -90,9 +93,15 @@ export class ServerFarmEngine {
   private weedSpawnTimer = 10;
   private wellRainAccum = 0;
 
-  constructor(members: LobbyMember[]) {
-    this.targets = getOrderTargets(members.length);
+  constructor(members: LobbyMember[], stage: StageLevel = 1) {
+    this.stage = stage;
+    this.targets = getOrderTargets(members.length, stage);
+    this.critterSpawnTimer = stage === 3 ? 4.5 : stage === 2 ? 5.5 : 6.5;
     this.initWorld(members);
+  }
+
+  private rollRipeBerryCount(): number {
+    return 1 + Math.floor(Math.random() * 3);
   }
 
   private initWorld(members: LobbyMember[]): void {
@@ -158,6 +167,7 @@ export class ServerFarmEngine {
           berryType: PLOT_BERRY_LAYOUT[idx],
           stage,
           growthProgress: stage === 'ripe' ? 1 : 0.35 + (idx % 3) * 0.2,
+          ripeBerriesRemaining: stage === 'ripe' ? this.rollRipeBerryCount() : 0,
           waterLevel: idx === 1 || idx === 6 ? 0.22 : 0.75 + (idx % 3) * 0.07,
           needsWater: idx === 1 || idx === 6,
           hasWeeds: idx === 5,
@@ -537,7 +547,9 @@ export class ServerFarmEngine {
           });
           return;
         }
-        if (heldRack.basketBerries.length >= heldRack.maxBasketCapacity) {
+        const freeSpace =
+          heldRack.maxBasketCapacity - heldRack.basketBerries.length;
+        if (freeSpace <= 0) {
           this.pendingFx.push({
             type: 'error',
             playerId: player.id,
@@ -549,19 +561,36 @@ export class ServerFarmEngine {
           return;
         }
 
-        heldRack.basketBerries.push(plot.berryType);
-        plot.stage = 'flowering';
-        plot.growthProgress = 0.25;
+        const available = Math.max(1, plot.ripeBerriesRemaining || 1);
+        const taken = Math.min(freeSpace, available);
+        for (let i = 0; i < taken; i++) {
+          heldRack.basketBerries.push(plot.berryType);
+        }
+
+        const remainingOnTree = available - taken;
+        plot.ripeBerriesRemaining = remainingOnTree;
         plot.popTimer = 0.35;
+
+        if (remainingOnTree <= 0) {
+          plot.stage = 'flowering';
+          plot.growthProgress = 0.25;
+          plot.ripeBerriesRemaining = 0;
+        }
+
+        const harvestText =
+          remainingOnTree > 0
+            ? `+${taken} ${BERRY_META[plot.berryType].label} (Sisa ${remainingOnTree})`
+            : `+${taken} ${BERRY_META[plot.berryType].label}`;
+
         this.pendingFx.push({
           type: 'harvest',
           playerId: player.id,
           x: plot.x,
           y: plot.y - 16,
-          text: `+1 ${BERRY_META[plot.berryType].label}`,
+          text: harvestText,
           color: BERRY_META[plot.berryType].color,
           particleKind: 'sparkle',
-          count: 14,
+          count: 10 + taken * 3,
         });
       }
     }
@@ -935,6 +964,7 @@ export class ServerFarmEngine {
           } else if (plot.stage === 'flowering') {
             plot.stage = 'ripe';
             plot.growthProgress = 1;
+            plot.ripeBerriesRemaining = this.rollRipeBerryCount();
             this.pendingFx.push({
               type: 'harvest',
               x: plot.x,
@@ -951,29 +981,41 @@ export class ServerFarmEngine {
 
   private updateWaveDirector(dt: number): void {
     const progressRatio = clamp(this.elapsedPlayTime / this.totalDuration, 0, 1);
+    const stageCfg = STAGE_CONFIG[this.stage];
     const isSolo = this.players.length <= 1;
     const maxBase = isSolo ? 1 : this.players.length >= 5 ? 3 : 2;
-    const maxActive = isSolo
-      ? progressRatio > 0.65
-        ? 2
-        : 1
-      : progressRatio > 0.5
-        ? maxBase + 1
-        : maxBase;
+    const stageBonus = isSolo
+      ? this.stage === 3
+        ? 1
+        : 0
+      : stageCfg.maxActiveBonus;
+    const maxActive =
+      (isSolo
+        ? progressRatio > 0.65
+          ? 2
+          : 1
+        : progressRatio > 0.5
+          ? maxBase + 1
+          : maxBase) + stageBonus;
+
     const activeCount =
       this.critters.filter((c) => c.state !== 'fleeing').length +
       this.telegraphs.length;
 
     this.critterSpawnTimer -= dt;
     if (this.critterSpawnTimer <= 0) {
-      const nextInterval = isSolo
-        ? 16.5 - progressRatio * 4.5 + Math.random() * 2.5
+      const baseInterval = isSolo
+        ? 16.0 - progressRatio * 4.2 + Math.random() * 2.2
         : Math.max(
-            5.5,
-            13.0 - progressRatio * 4.8 - Math.max(0, this.players.length - 2) * 1.1
+            5.2,
+            12.8 - progressRatio * 4.5 - Math.max(0, this.players.length - 2) * 1.0
           ) +
-          Math.random() * 2.2;
-      this.critterSpawnTimer = nextInterval;
+          Math.random() * 2.0;
+
+      this.critterSpawnTimer = Math.max(
+        isSolo ? 6.5 : 4.2,
+        baseInterval * stageCfg.spawnIntervalScale
+      );
 
       if (activeCount < maxActive) {
         this.spawnCritterTelegraph();
@@ -991,26 +1033,76 @@ export class ServerFarmEngine {
 
     let kind: CritterKind;
     const roll = Math.random();
-    if (this.elapsedPlayTime < 160) {
-      // Menit-menit pertama (0:00 - 2:40): Wurmple menyerang
-      kind = 'wurmple';
-    } else if (this.elapsedPlayTime < 320) {
-      // Menit pertengahan (2:40 - 5:20): Zigzagoon mengambil alih
-      kind = this.elapsedPlayTime < 210 && roll < 0.2 ? 'wurmple' : 'zigzagoon';
+    if (this.stage === 1) {
+      // Stage 1: Wurmple & Zigzagoon
+      if (this.elapsedPlayTime < 90) {
+        kind = 'wurmple';
+      } else if (this.elapsedPlayTime < 200) {
+        kind = roll < 0.65 ? 'wurmple' : 'zigzagoon';
+      } else {
+        kind = roll < 0.4 ? 'wurmple' : 'zigzagoon';
+      }
+    } else if (this.stage === 2) {
+      // Stage 2: Zigzagoon & Taillow
+      if (this.elapsedPlayTime < 80) {
+        kind = 'zigzagoon';
+      } else if (this.elapsedPlayTime < 220) {
+        kind = roll < 0.6 ? 'zigzagoon' : 'taillow';
+      } else {
+        kind = roll < 0.4 ? 'zigzagoon' : 'taillow';
+      }
     } else {
-      // Menit-menit terakhir (5:20 - 8:00): Taillow sebagai gelombang terakhir
-      kind = this.elapsedPlayTime < 380 && roll < 0.2 ? 'zigzagoon' : 'taillow';
+      // Stage 3: Semua hama (Wurmple, Zigzagoon, Taillow) datang serentak
+      if (this.elapsedPlayTime < 90) {
+        kind = roll < 0.4 ? 'wurmple' : roll < 0.75 ? 'zigzagoon' : 'taillow';
+      } else {
+        kind = roll < 0.25 ? 'wurmple' : roll < 0.6 ? 'zigzagoon' : 'taillow';
+      }
     }
 
-    this.telegraphs.push({
+    const priority =
+      kind === 'taillow'
+        ? validPlots.filter((p) => p.stage === 'ripe')
+        : validPlots.filter((p) => p.stage === 'ripe' || p.stage === 'flowering');
+    const fallbackPriority = validPlots.filter(
+      (p) => p.stage === 'ripe' || p.stage === 'flowering'
+    );
+    const pool =
+      priority.length > 0
+        ? priority
+        : fallbackPriority.length > 0
+          ? fallbackPriority
+          : validPlots;
+    const target =
+      pool.length > 0
+        ? pool[Math.floor(Math.random() * pool.length)]
+        : this.plots[0];
+
+    const meta = CRITTER_META[kind];
+    this.critters.push({
       id: this.nextEntityId++,
+      kind,
       x,
       y,
-      timer: 1.5,
-      maxTimer: 1.5,
-      kind,
+      targetPlotId: target.id,
+      state: 'moving',
+      hp: meta.maxHp,
+      maxHp: meta.maxHp,
+      eatTimer: 0.7,
+      stunTimer: 0,
+      walkPhase: 0,
+      hitFlash: 0,
+      squash: 0,
+      facingX: -1,
     });
-    this.pendingFx.push({ type: 'alert', critterKind: kind });
+    this.pendingFx.push({
+      type: 'weed',
+      x,
+      y,
+      particleKind: 'leaf',
+      color: meta.accentColor,
+      count: 6,
+    });
   }
 
   private updateTelegraphs(dt: number): void {
@@ -1146,9 +1238,17 @@ export class ServerFarmEngine {
 
           let ateText: string | undefined;
           if (targetPlot.stage === 'ripe') {
-            targetPlot.stage = 'flowering';
-            targetPlot.growthProgress = 0.35;
-            ateText = c.kind === 'taillow' ? 'Buah disambar!' : 'Buah dimakan!';
+            if ((targetPlot.ripeBerriesRemaining ?? 1) > 1) {
+              targetPlot.ripeBerriesRemaining -= 1;
+              ateText =
+                c.kind === 'taillow' ? '1 Buah disambar!' : '1 Buah dimakan!';
+            } else {
+              targetPlot.stage = 'flowering';
+              targetPlot.growthProgress = 0.35;
+              targetPlot.ripeBerriesRemaining = 0;
+              ateText =
+                c.kind === 'taillow' ? 'Buah disambar!' : 'Buah dimakan!';
+            }
           } else if (targetPlot.growthProgress > 0.25) {
             targetPlot.growthProgress = Math.max(0, targetPlot.growthProgress - 0.35);
           } else if (targetPlot.stage === 'flowering') {
@@ -1173,6 +1273,7 @@ export class ServerFarmEngine {
   public getSnapshot(): WorldSnapshot {
     return {
       phase: this.phase,
+      stage: this.stage,
       timeRemaining: this.timeRemaining,
       totalDuration: this.totalDuration,
       weather: this.weather,

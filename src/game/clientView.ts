@@ -22,7 +22,6 @@ import {
 import type {
   AmbientButterfly,
   BerryPlotState,
-  CritterKind,
   FxEvent,
   GrowthStage,
   InteractPrompt,
@@ -64,7 +63,6 @@ export class ClientWorldView {
   public berryMasterSpeechTimer = 0;
   public berryMasterCheerTimer = 0;
   public localPrompt: InteractPrompt | null = null;
-  private announcedCritters = new Set<CritterKind>();
 
   constructor() {
     this.snapshot = this.createPreviewSnapshot();
@@ -130,6 +128,7 @@ export class ClientWorldView {
     for (let row = 0; row < 3; row++) {
       for (let col = 0; col < 3; col++) {
         const idx = row * 3 + col;
+        const stage = previewStages[idx];
         plots.push({
           id: idx,
           row,
@@ -137,8 +136,9 @@ export class ClientWorldView {
           x: PLOT_COLS_X[col],
           y: PLOT_ROWS_Y[row],
           berryType: PLOT_BERRY_LAYOUT[idx],
-          stage: previewStages[idx],
+          stage,
           growthProgress: 0.7,
+          ripeBerriesRemaining: stage === 'ripe' ? ((idx % 3) + 1) : 0,
           waterLevel: 0.85,
           needsWater: false,
           hasWeeds: false,
@@ -152,12 +152,13 @@ export class ClientWorldView {
 
     return {
       phase: 'LOBBY',
+      stage: 1,
       timeRemaining: DAY_DURATION_SECONDS,
       totalDuration: DAY_DURATION_SECONDS,
       weather: 'sunny',
       weatherTimer: 28,
       delivered: { oran: 0, pecha: 0, sitrus: 0 },
-      targets: getOrderTargets(4),
+      targets: getOrderTargets(4, 1),
       crittersRepelled: 0,
       wellWater: WELL_INITIAL_WATER,
       maxWellWater: WELL_MAX_WATER,
@@ -179,7 +180,6 @@ export class ClientWorldView {
     this.berryMasterSpeechTimer = 0;
     this.berryMasterCheerTimer = 0;
     this.localPrompt = null;
-    this.announcedCritters.clear();
   }
 
   public applyServerSnapshot(next: WorldSnapshot): void {
@@ -255,19 +255,7 @@ export class ClientWorldView {
       else if (ev.type === 'whistle' && ev.particleKind === undefined) {
         soundManager.playWhistle(Boolean(ev.repelled));
       } else if (ev.type === 'munch') soundManager.playCritterMunch();
-      else if (ev.type === 'alert') {
-        soundManager.playCritterAlert();
-        if (ev.critterKind && !this.announcedCritters.has(ev.critterKind)) {
-          this.announcedCritters.add(ev.critterKind);
-          if (ev.critterKind === 'wurmple') {
-            this.setBerryMasterSpeech('Awas! Wurmple mulai menyerang kebun!', 2.7);
-          } else if (ev.critterKind === 'zigzagoon') {
-            this.setBerryMasterSpeech('Hati-hati! Zigzagoon lincah datang!', 2.7);
-          } else if (ev.critterKind === 'taillow') {
-            this.setBerryMasterSpeech('Waspada! Taillow menyambar dari langit!', 2.9);
-          }
-        }
-      } else if (ev.type === 'weather' && ev.weather) {
+      else if (ev.type === 'weather' && ev.weather) {
         soundManager.playWeatherChange(ev.weather);
         if (ev.weather === 'rainy') {
           this.setBerryMasterSpeech('Hujan turun! Tanah basah & sumur terisi!', 2.8);
@@ -662,13 +650,14 @@ export class ClientWorldView {
             kind: 'plot',
           };
         }
+        const count = Math.max(1, bestPlot.ripeBerriesRemaining || 1);
         return {
           x: bestPlot.x,
           y: bestPlot.y - 54,
           label:
             heldRack.basketBerries.length >= heldRack.maxBasketCapacity
               ? 'Keranjang Penuh!'
-              : `Petik ${BERRY_META[bestPlot.berryType].label}`,
+              : `Petik ${BERRY_META[bestPlot.berryType].label} (${count})`,
           accentColor: '#E09F3E',
           kind: 'plot',
         };
